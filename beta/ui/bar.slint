@@ -1,0 +1,602 @@
+// The floating dictation bar: pill, live preview and right-click menu.
+// The window has a fixed size that fits the biggest state (menu above the hint pill), so it never resizes
+// (resizing flickers). Rust limits it to the content with a window region, so hovering starts on the pill itself.
+//
+// Motion: one pill morphs between the states (spring), each state's content cross-fades inside it, and the live
+// preview and the menu grow out of the pill. Every size that animates feeds `lay`, so the window region follows.
+import { Theme, Icons } from "theme.slint";
+import { Icon, Keycaps } from "widgets.slint";
+
+component PillButton inherits Rectangle {
+    in property <bool> solid;
+    in property <bool> enabled: true;
+    callback clicked();
+    width: 28px;
+    height: 28px;
+    border-radius: 14px;
+    background: solid ? Theme.pill-fg : Theme.pill-soft;
+    @children
+    TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component MenuItem inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <string> sub;
+    in property <bool> checked;
+    in property <bool> enabled: true;
+    // False while the menu is closed or closing: no hover, no clicks.
+    in property <bool> live: true;
+    callback clicked();
+    height: sub != "" ? 48px : 36px;
+    border-radius: 10px;
+    background: enabled && live && ta.has-hover ? Theme.pill-soft : transparent;
+    opacity: enabled ? 1 : 0.5;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+        Icon {
+            path: root.icon;
+            size: 16px;
+            stroke-px: 2px;
+            color: Theme.pill-fg;
+            y: (parent.height - self.height) / 2;
+        }
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            spacing: 1px;
+            Text {
+                text: root.label;
+                color: Theme.pill-fg;
+                font-size: 13.5px;
+                font-weight: 500;
+            }
+            if root.sub != "": Text {
+                text: root.sub;
+                color: Theme.pill-fg.with-alpha(0.6);
+                font-size: 12px;
+                overflow: elide;
+            }
+        }
+        if root.checked: Icon {
+            path: Icons.check;
+            size: 16px;
+            stroke-px: 2.4px;
+            color: Theme.pill-fg;
+            y: (parent.height - self.height) / 2;
+        }
+    }
+    ta := TouchArea {
+        enabled: root.enabled && root.live;
+        clicked => { root.clicked(); }
+    }
+}
+
+component MenuSep inherits Rectangle {
+    height: 11px;
+    Rectangle {
+        height: 1px;
+        x: 8px;
+        width: parent.width - 16px;
+        background: Theme.pill-fg.with-alpha(0.15);
+    }
+}
+
+component Menu inherits Rectangle {
+    in property <string> last-text;
+    in property <bool> preview-on;
+    in property <bool> idle-on;
+    in property <int> position; // 0 bottom, 1 top, 2 custom
+    in property <bool> open: true;
+    callback action(string);
+    width: 256px;
+    height: l.preferred-height;
+    border-radius: 16px;
+    background: Theme.pill;
+    drop-shadow-blur: 18px;
+    drop-shadow-offset-y: 6px;
+    drop-shadow-color: #00000059;
+    // Swallow clicks between items so they don't reach the pill underneath.
+    TouchArea { enabled: root.open; }
+    l := VerticalLayout {
+        padding: 6px;
+        MenuItem {
+            live: root.open;
+            icon: Icons.paste;
+            label: "Paste last dictation";
+            sub: root.last-text != "" ? root.last-text : "Nothing dictated yet";
+            enabled: root.last-text != "";
+            clicked => { root.action("paste"); }
+        }
+        MenuItem {
+            live: root.open;
+            icon: Icons.copy;
+            label: "Copy last dictation";
+            enabled: root.last-text != "";
+            clicked => { root.action("copy"); }
+        }
+        MenuSep { }
+        MenuItem {
+            live: root.open;
+            icon: Icons.lines;
+            label: "Live preview";
+            checked: root.preview-on;
+            clicked => { root.action("preview"); }
+        }
+        MenuItem {
+            live: root.open;
+            icon: Icons.eye;
+            label: "Show bar when idle";
+            checked: root.idle-on;
+            clicked => { root.action("idle"); }
+        }
+        MenuItem {
+            live: root.open;
+            icon: root.position == 0 ? Icons.arrow-up : Icons.arrow-down;
+            label: root.position == 2 ? "Snap back to bottom" : root.position == 1 ? "Move to bottom" : "Move to top";
+            clicked => { root.action(root.position == 0 ? "top" : "bottom"); }
+        }
+        MenuSep { }
+        MenuItem {
+            live: root.open;
+            icon: Icons.window;
+            label: "Open Hamsa Beta";
+            clicked => { root.action("open"); }
+        }
+        MenuItem {
+            live: root.open;
+            icon: Icons.gear;
+            label: "Settings";
+            clicked => { root.action("settings"); }
+        }
+        MenuItem {
+            live: root.open;
+            icon: Icons.power;
+            label: "Quit Hamsa Beta";
+            clicked => { root.action("quit"); }
+        }
+    }
+}
+
+// The words so far. The whole text is drawn dimmed, then the settled words are drawn on top at full strength:
+// a prefix wraps exactly like the start of the full text, so the two line up.
+component Bubble inherits Rectangle {
+    in property <string> stable;
+    in property <string> tentative;
+    property <string> full: stable == "" ? tentative : tentative == "" ? stable : stable + " " + tentative;
+    property <length> max-text: 3 * 20.3px; // three lines at 14 px × 1.45
+    // The height it has when fully grown (the row animates `height` from 0 to this).
+    out property <length> natural-h: min(all.preferred-height, max-text) + 24px;
+    width: 380px;
+    height: natural-h;
+    border-radius: 16px;
+    background: Theme.pill;
+    drop-shadow-blur: 18px;
+    drop-shadow-offset-y: 6px;
+    drop-shadow-color: #00000038;
+    Rectangle {
+        x: 16px;
+        y: 12px;
+        width: parent.width - 32px;
+        height: max(0px, parent.height - 24px);
+        clip: true;
+        all := Text {
+            y: parent.height - self.height;
+            width: parent.width;
+            text: root.full;
+            wrap: word-wrap;
+            font-size: 14px;
+            line-height-factor: 1.16; // CSS 1.45
+            color: Theme.pill-fg.with-alpha(0.55);
+        }
+        Text {
+            y: all.y;
+            width: parent.width;
+            text: root.stable;
+            wrap: word-wrap;
+            font-size: 14px;
+            line-height-factor: 1.16;
+            color: Theme.pill-fg;
+        }
+        // Older lines fade out at the top.
+        if all.preferred-height > root.max-text: Rectangle {
+            y: 0;
+            height: 26px;
+            background: @linear-gradient(180deg, Theme.pill 0%, Theme.pill.with-alpha(0) 100%);
+        }
+    }
+}
+
+// The menu's row in the bar's column. It grows out of the pill: the row's height animates (gap to the pill
+// included), the menu is revealed from the pill side while it fades and slides 8 px.
+component MenuRow inherits HorizontalLayout {
+    in property <bool> open;
+    in property <bool> up; // true when the bar sits at the bottom and the menu opens upward
+    in property <float> motion: 1; // 0 turns the motion off
+    in property <string> last-text;
+    in property <bool> preview-on;
+    in property <bool> idle-on;
+    in property <int> position;
+    callback action(string);
+    property <length> gap: 10px;
+    property <length> full: m.height + gap;
+    property <length> grown: open ? full : 0px;
+    property <length> slide: open ? 0px : 8px;
+    animate grown, slide {
+        duration: (open ? 220ms : 160ms) * motion;
+        easing: ease-out;
+    }
+    alignment: center;
+    Rectangle {
+        width: root.grown > 0.5px ? 256px : 0px;
+        height: root.grown;
+        Rectangle {
+            y: root.up ? 0px : root.gap;
+            width: parent.width;
+            height: max(0px, root.grown - root.gap);
+            // Only while it grows or shrinks; at rest the shadow isn't cut.
+            clip: root.grown < root.full - 0.5px;
+            m := Menu {
+                x: 0px;
+                y: root.up ? parent.height - self.height + root.slide : 0px - root.slide;
+                opacity: root.open ? 1 : 0;
+                // Reading the opacity here also keeps its animation running while it is hidden.
+                visible: self.opacity > 0.001;
+                animate opacity {
+                    duration: (root.open ? 220ms : 160ms) * root.motion;
+                    easing: ease-out;
+                }
+                open: root.open;
+                last-text: root.last-text;
+                preview-on: root.preview-on;
+                idle-on: root.idle-on;
+                position: root.position;
+                action(a) => { root.action(a); }
+            }
+        }
+    }
+}
+
+// The live preview's row: the bubble grows from nothing (spring) and fades in; its height follows the wrapped lines.
+component BubbleRow inherits HorizontalLayout {
+    in property <bool> open;
+    in property <bool> up;
+    in property <float> motion: 1;
+    in property <string> stable;
+    in property <string> tentative;
+    property <length> gap: 10px;
+    property <length> grown: open ? b.natural-h + gap : 0px;
+    animate grown {
+        duration: 300ms * motion;
+        easing: cubic-bezier(0.32, 1.25, 0.5, 1);
+    }
+    alignment: center;
+    Rectangle {
+        width: root.grown > 0.5px ? 380px : 0px;
+        height: root.grown;
+        b := Bubble {
+            y: root.up ? 0px : root.gap;
+            height: max(0px, root.grown - root.gap);
+            opacity: root.open ? 1 : 0;
+            visible: self.opacity > 0.001;
+            animate opacity {
+                duration: 300ms * root.motion;
+                easing: ease-out;
+            }
+            stable: root.stable;
+            tentative: root.tentative;
+        }
+    }
+}
+
+// One state's content inside the pill: natural size, centred, so it doesn't reflow while the pill morphs.
+// Leaving: fades out in 120 ms. Arriving: after 140 ms fades in over 200 ms and slides up 4 px.
+component Layer inherits Rectangle {
+    in property <bool> shown;
+    in property <float> motion: 1;
+    in property <length> host-w;
+    in property <length> host-h;
+    property <length> dy: shown ? 0px : 4px;
+    x: (host-w - self.width) / 2;
+    y: (host-h - self.height) / 2 + dy;
+    opacity: shown ? 1 : 0;
+    // Hidden layers draw nothing, take no clicks and run no animations.
+    visible: self.opacity > 0.001;
+    animate opacity {
+        duration: (shown ? 200ms : 120ms) * motion;
+        delay: (shown ? 140ms : 0ms) * motion;
+        easing: shown ? ease-out : linear;
+    }
+    animate dy {
+        duration: (shown ? 200ms : 0ms) * motion;
+        delay: (shown ? 140ms : 120ms) * motion;
+        easing: ease-out;
+    }
+    @children
+}
+
+export component BarWindow inherits Window {
+    title: "Hamsa bar";
+    // Menu 334 + hint pill 48 + layout padding and spacing 22 = 404 tall; the live-preview bubble is 392 wide.
+    width: 400px;
+    height: 420px;
+    no-frame: true;
+    always-on-top: true;
+    background: transparent;
+    default-font-family: Theme.font;
+
+    // From Rust
+    in property <int> phase; // 0 idle, 1 listening, 2 transcribing
+    in property <float> level;
+    in property <string> stable;
+    in property <string> tentative;
+    in property <bool> preview-on: true;
+    in property <bool> idle-on: true;
+    in property <bool> anchor-bottom: true;
+    in property <bool> menu-open;
+    // Hands-free recording (double-tap): the pill shows a lock so you know you can let go.
+    in property <bool> locked;
+    // The setting is on: the hover hint also tells how to lock.
+    in property <bool> hands-free: true;
+    in property <string> last-text;
+    in property <int> place-mode;
+    in property <[string]> shortcut: ["Ctrl", "Win"];
+    // Windows "Animation effects" is off: no motion, states switch at once.
+    in property <bool> reduce-motion;
+    // Dev aid: show the hover hint without the pointer.
+    in property <bool> force-hint;
+
+    callback cancel();
+    callback stop();
+    callback open-menu();
+    callback menu-action(string);
+    callback start-drag();
+    callback reset-position();
+    callback resized();
+
+    property <float> motion: reduce-motion ? 0 : 1;
+    property <bool> hovering: ta.has-hover;
+    property <bool> show-hint: phase == 0 && (hovering || menu-open || force-hint);
+    property <bool> show-bubble: phase != 0 && preview-on && !menu-open && (stable != "" || tentative != "");
+    // 0 idle, 1 hover hint, 2 listening, 3 transcribing
+    property <int> kind: phase == 1 ? 2 : phase == 2 ? 3 : show-hint ? 1 : 0;
+
+    // The bubble keeps its last words while it shrinks away (Rust clears them when the bar goes idle).
+    property <string> held-stable;
+    property <string> held-tentative;
+    changed stable => { root.keep-words(); }
+    changed tentative => { root.keep-words(); }
+    function keep-words() {
+        if root.stable != "" || root.tentative != "" {
+            root.held-stable = root.stable;
+            root.held-tentative = root.tentative;
+        }
+    }
+
+    // The content's size. It sits at the bottom (or top) centre of the window; Rust turns this into the window region.
+    out property <length> want-width: lay.preferred-width;
+    out property <length> want-height: lay.preferred-height;
+    changed want-width => { root.resized(); }
+    changed want-height => { root.resized(); }
+
+    ta := TouchArea {
+        property <bool> dragging;
+        double-clicked => { root.reset-position(); }
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+                root.open-menu();
+            }
+        }
+        moved => {
+            if self.pressed && !self.dragging && (abs(self.mouse-x - self.pressed-x) + abs(self.mouse-y - self.pressed-y)) > 4px {
+                self.dragging = true;
+                root.start-drag();
+            }
+        }
+        changed pressed => {
+            if !self.pressed { self.dragging = false; }
+        }
+    }
+
+    lay := VerticalLayout {
+        padding: 6px;
+        spacing: 0px;
+        alignment: root.anchor-bottom ? end : start;
+
+        if root.anchor-bottom: MenuRow {
+            up: true;
+            open: root.menu-open;
+            motion: root.motion;
+            last-text: root.last-text;
+            preview-on: root.preview-on;
+            idle-on: root.idle-on;
+            position: root.place-mode;
+            action(a) => { root.menu-action(a); }
+        }
+        if root.anchor-bottom: BubbleRow {
+            up: true;
+            open: root.show-bubble;
+            motion: root.motion;
+            stable: root.held-stable;
+            tentative: root.held-tentative;
+        }
+
+        HorizontalLayout {
+            alignment: center;
+            // The one pill: its size, corners, opacity and shadow come from the state and animate (spring).
+            pill := Rectangle {
+                property <length> target-w: root.kind == 0 ? 44px : root.kind == 1 ? hint.preferred-width : root.kind == 2 ? live.preferred-width : 74px;
+                property <length> target-h: root.kind == 0 ? 8px : root.kind == 1 ? 48px : 44px;
+                width: target-w;
+                height: target-h;
+                border-radius: root.kind == 0 ? 4px : root.kind == 1 ? 24px : 22px;
+                background: Theme.pill;
+                opacity: root.kind == 0 ? (Theme.dark ? 0.55 : 0.75) : 1;
+                // Only while it morphs, so content stays inside the shrinking corners.
+                clip: self.width != target-w || self.height != target-h;
+                drop-shadow-blur: root.kind >= 2 && Theme.pill-shadow ? 20px : 0px;
+                drop-shadow-offset-y: root.kind >= 2 && Theme.pill-shadow ? 6px : 0px;
+                drop-shadow-color: root.kind >= 2 && Theme.pill-shadow ? #0000002e : #00000000;
+                animate width, height, border-radius {
+                    duration: 380ms * root.motion;
+                    easing: cubic-bezier(0.32, 1.25, 0.5, 1);
+                }
+                animate opacity, drop-shadow-blur, drop-shadow-offset-y, drop-shadow-color {
+                    duration: 380ms * root.motion;
+                    easing: ease;
+                }
+
+                // Hover: how to dictate.
+                Layer {
+                    shown: root.kind == 1;
+                    motion: root.motion;
+                    host-w: pill.width;
+                    host-h: pill.height;
+                    width: hint.preferred-width;
+                    height: 48px;
+                    hint := HorizontalLayout {
+                        padding-left: 14px;
+                        padding-right: 14px;
+                        padding-bottom: 4px;
+                        spacing: 8px;
+                        alignment: center;
+                        Text {
+                            text: "Hold";
+                            color: Theme.pill-fg;
+                            font-size: 13px;
+                            font-weight: Theme.dark ? 700 : 600;
+                            vertical-alignment: center;
+                        }
+                        Keycaps {
+                            labels: root.shortcut;
+                            size: 0;
+                            edge: Theme.dark ? #000000 : #ffffff;
+                            shadow-color: Theme.dark ? #000000 : #8a8578;
+                            height: self.preferred-height;
+                            y: (parent.height - self.preferred-height) / 2 + 2px;
+                        }
+                        Text {
+                            text: "to dictate";
+                            color: Theme.pill-fg;
+                            font-size: 13px;
+                            font-weight: Theme.dark ? 700 : 600;
+                            vertical-alignment: center;
+                        }
+                        if root.hands-free: Text {
+                            text: "· double-tap to lock";
+                            color: Theme.pill-fg.with-alpha(0.6);
+                            font-size: 13px;
+                            font-weight: Theme.dark ? 700 : 600;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+                // Listening: cancel, live level, stop.
+                Layer {
+                    shown: root.kind == 2;
+                    motion: root.motion;
+                    host-w: pill.width;
+                    host-h: pill.height;
+                    width: live.preferred-width;
+                    height: 44px;
+                    // The lock slides in at the left: the room it needs grows with the pill's morph.
+                    property <length> lock-room: root.locked ? 24px : 0px;
+                    animate lock-room {
+                        duration: 280ms * root.motion;
+                        easing: ease-out;
+                    }
+                    Icon {
+                        x: 11px;
+                        y: 15px;
+                        path: Icons.lock;
+                        size: 14px;
+                        stroke-px: 2.4px;
+                        color: Theme.pill-fg;
+                        opacity: root.locked ? 1 : 0;
+                        animate opacity {
+                            duration: 200ms * root.motion;
+                            easing: ease-out;
+                        }
+                    }
+                    live := HorizontalLayout {
+                        padding-left: 8px + parent.lock-room;
+                        padding-right: 8px;
+                        spacing: 10px;
+                        alignment: center;
+                        PillButton {
+                            y: 8px;
+                            enabled: root.kind == 2;
+                            clicked => { root.cancel(); }
+                            Icon { path: Icons.x; size: 14px; stroke-px: 2.4px; color: Theme.pill-fg; }
+                        }
+                        HorizontalLayout {
+                            spacing: 3px;
+                            alignment: center;
+                            for p in [0.45, 0.7, 0.95, 0.6, 1.0, 0.75, 0.5, 0.85, 1.0, 0.6, 0.75, 0.45]: Rectangle {
+                                width: 3px;
+                                height: 6px + 18px * p * root.level;
+                                y: (44px - self.height) / 2;
+                                border-radius: 1.5px;
+                                background: Theme.pill-fg;
+                                animate height { duration: 80ms; }
+                            }
+                        }
+                        PillButton {
+                            y: 8px;
+                            solid: true;
+                            enabled: root.kind == 2;
+                            clicked => { root.stop(); }
+                            Rectangle { width: 10px; height: 10px; border-radius: 2.5px; background: Theme.pill; }
+                        }
+                    }
+                }
+                // Transcribing: three dots.
+                Layer {
+                    shown: root.kind == 3;
+                    motion: root.motion;
+                    host-w: pill.width;
+                    host-h: pill.height;
+                    width: 74px;
+                    height: 44px;
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 10px;
+                        for i in [0, 1, 2]: Rectangle {
+                            property <float> t: Math.mod(animation-tick() / 1100ms + 1 - i * 0.14, 1);
+                            width: 6px;
+                            height: 6px;
+                            y: 19px - (t < 0.4 ? t / 0.4 : t < 0.8 ? (0.8 - t) / 0.4 : 0) * 2px;
+                            border-radius: 3px;
+                            background: Theme.pill-fg;
+                            opacity: 0.25 + 0.75 * (t < 0.4 ? t / 0.4 : t < 0.8 ? (0.8 - t) / 0.4 : 0);
+                        }
+                    }
+                }
+            }
+        }
+
+        if !root.anchor-bottom: BubbleRow {
+            up: false;
+            open: root.show-bubble;
+            motion: root.motion;
+            stable: root.held-stable;
+            tentative: root.held-tentative;
+        }
+        if !root.anchor-bottom: MenuRow {
+            up: false;
+            open: root.menu-open;
+            motion: root.motion;
+            last-text: root.last-text;
+            preview-on: root.preview-on;
+            idle-on: root.idle-on;
+            position: root.place-mode;
+            action(a) => { root.menu-action(a); }
+        }
+    }
+}

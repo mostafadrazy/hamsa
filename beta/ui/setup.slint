@@ -1,0 +1,879 @@
+// The first-run setup window: five steps (welcome, speech model, microphone, try it, ready), from the approved
+// "Setup" artboards. It is its own window with its own copy of the globals, so everything it shows lives in SetupState.
+import { Theme, Icons } from "theme.slint";
+import { Icon, Keycaps, SolidButton, LineButton, Switch, Select, Tag } from "widgets.slint";
+
+export struct SetupModel {
+    id: string,
+    name: string,
+    recommended: bool,
+    langs: string,
+    size: string,
+    speed: string,
+    acc: string,
+    installed: bool,
+    downloading: bool,
+    progress: float,
+    percent: int,
+    status: string,
+    error: string,
+    active: bool,
+}
+
+export global SetupState {
+    in-out property <int> step: 1; // 1..5
+
+    in property <[string]> shortcut: ["Ctrl", "Win"];
+
+    // Step 2
+    in property <[SetupModel]> models;
+    in-out property <string> selected-model;
+    // Whether a speech model is loaded and can transcribe; and the line shown instead of the practice prompt when not.
+    in property <bool> model-ready;
+    in property <string> model-line;
+
+    // Step 3
+    in property <[string]> microphones;
+    in-out property <int> microphone;
+    in property <float> level; // 0..1, the live input meter
+    in property <string> mic-error;
+    in property <int> test-phase; // 0 idle, 1 listening, 2 working, 3 done
+    in property <string> heard;
+    in property <int> verdict; // 0 none yet, 1 good, 2 too quiet or a problem
+    in property <string> test-status;
+
+    // Step 4
+    in-out property <string> practice-text;
+    in-out property <bool> cleanup-on;
+    in property <string> cleanup-badge;
+    in property <string> cleanup-note;
+
+    // Step 5
+    in property <string> summary-model;
+    in property <string> summary-model-note;
+    in property <string> summary-mic;
+    in property <string> summary-cleanup;
+    in-out property <bool> start-windows: true;
+    in-out property <bool> bar-visible: true;
+
+    callback next();
+    callback back();
+    callback go(int);
+    callback finish();
+    callback pick-model(string);
+    callback download-model(string);
+    callback pick-mic(int);
+    callback run-test();
+    callback set-cleanup(bool);
+    callback set-bar(bool);
+}
+
+// ---------- Shared pieces ----------
+
+component Heading inherits VerticalLayout {
+    in property <string> title;
+    in property <string> sub;
+    spacing: 8px;
+    Text { text: root.title; font-size: 32px; font-weight: 500; letter-spacing: -0.48px; line-height-factor: 0.88; color: Theme.text; }
+    Text { text: root.sub; font-size: 15px; line-height-factor: 1.24; color: Theme.muted; wrap: word-wrap; }
+}
+
+component Dots inherits HorizontalLayout {
+    spacing: 6px;
+    for i in 5: VerticalLayout {
+        alignment: center;
+        Rectangle {
+            width: 28px;
+            height: 4px;
+            border-radius: 2px;
+            background: i < SetupState.step ? Theme.accent : Theme.track-off;
+        }
+    }
+}
+
+// A line of text with a small keycap run inside it.
+component Hold inherits HorizontalLayout {
+    in property <string> before;
+    in property <[string]> keys;
+    in property <string> after;
+    spacing: 8px;
+    alignment: start;
+    if root.before != "": Text { text: root.before; font-size: 14px; color: Theme.nav; vertical-alignment: center; }
+    VerticalLayout {
+        alignment: center;
+        Keycaps {
+            labels: root.keys;
+            size: 0;
+            face: Theme.key-face;
+            edge: Theme.key-edge;
+            shadow-color: Theme.dark ? #4d4a42 : #000000;
+        }
+    }
+    if root.after != "": Text { text: root.after; font-size: 14px; color: Theme.nav; vertical-alignment: center; }
+}
+
+component ChangeLink inherits Rectangle {
+    in property <string> label;
+    callback clicked();
+    width: t.preferred-width + 8px;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+    t := Text {
+        x: 4px;
+        height: parent.height;
+        text: "Change";
+        font-size: 13px;
+        font-weight: 600;
+        color: Theme.dark ? #ffffff : Theme.text;
+        vertical-alignment: center;
+    }
+    Rectangle { x: 4px; y: parent.height / 2 + 9px; width: t.preferred-width; height: 1px; background: t.color; }
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// ---------- 1 · Welcome ----------
+
+component WelcomeStep inherits VerticalLayout {
+    alignment: center;
+    spacing: 24px;
+    HorizontalLayout {
+        alignment: center;
+        Image { source: @image-url("../assets/hamsa-wordmark.svg"); width: 156px; height: 52px; colorize: Theme.text; }
+    }
+    VerticalLayout {
+        spacing: 12px;
+        HorizontalLayout {
+            alignment: center;
+            Text {
+                width: 640px;
+                text: "Talk instead of typing, in any app";
+                font-size: 40px;
+                font-weight: 500;
+                letter-spacing: -0.6px;
+                line-height-factor: 0.88;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+                color: Theme.text;
+            }
+        }
+        HorizontalLayout {
+            alignment: center;
+            Text {
+                width: 520px;
+                text: "Hold a shortcut and speak. Hamsa turns your words into text and pastes them right where you are typing.";
+                font-size: 16px;
+                line-height-factor: 1.24;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+                color: Theme.nav;
+            }
+        }
+    }
+    HorizontalLayout {
+        alignment: center;
+        Rectangle {
+            height: 40px;
+            width: pill.preferred-width;
+            border-radius: 20px;
+            background: Theme.card;
+            border-width: 1px;
+            border-color: Theme.line;
+            pill := HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: 8px;
+                alignment: center;
+                Icon { path: Icons.lock; size: 16px; stroke-px: 2px; color: Theme.teal; y: (parent.height - self.height) / 2; }
+                Text { text: "Your voice never leaves this PC"; font-size: 14px; font-weight: 600; color: Theme.teal; vertical-alignment: center; }
+            }
+        }
+    }
+    HorizontalLayout {
+        alignment: center;
+        Rectangle {
+            width: hint.preferred-width;
+            height: hint.preferred-height;
+            border-radius: 20px;
+            background: Theme.card;
+            border-width: 1px;
+            border-color: Theme.line;
+            hint := HorizontalLayout {
+                padding-left: 32px;
+                padding-right: 32px;
+                padding-top: 24px;
+                padding-bottom: 20px;
+                spacing: 18px;
+                Text { text: "Hold"; font-size: 16px; font-weight: 500; color: Theme.text; vertical-alignment: center; }
+                VerticalLayout {
+                    alignment: center;
+                    padding-bottom: 6px;
+                    Keycaps {
+                        labels: SetupState.shortcut;
+                        size: 2;
+                        plus-color: Theme.muted;
+                        face: Theme.key-face;
+                        edge: Theme.key-edge;
+                        shadow-color: Theme.key-shadow;
+                    }
+                }
+                Text { text: "to talk  ·  double-tap to keep listening"; font-size: 16px; font-weight: 500; color: Theme.text; vertical-alignment: center; }
+            }
+        }
+    }
+}
+
+// ---------- 2 · Speech model ----------
+
+component ModelOption inherits Rectangle {
+    in property <SetupModel> m;
+    property <bool> selected: SetupState.selected-model == root.m.id;
+    border-radius: 18px;
+    background: card-ta.has-hover ? (Theme.dark ? #141413 : Theme.row-hover) : Theme.card;
+    border-width: 1px;
+    border-color: Theme.line;
+    accessible-role: radio-button;
+    accessible-label: root.m.name;
+    accessible-checked: root.selected;
+    accessible-action-default => { SetupState.pick-model(root.m.id); }
+    if root.selected: Rectangle {
+        x: -2px;
+        y: -2px;
+        width: parent.width + 4px;
+        height: parent.height + 4px;
+        border-radius: 20px;
+        border-width: 2px;
+        border-color: Theme.accent;
+    }
+    card-ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { SetupState.pick-model(root.m.id); }
+    }
+    VerticalLayout {
+        padding-left: 20px;
+        padding-right: 20px;
+        padding-top: 18px;
+        padding-bottom: 14px;
+        spacing: 10px;
+        HorizontalLayout {
+            spacing: 12px;
+            HorizontalLayout {
+                horizontal-stretch: 1;
+                alignment: start;
+                spacing: 10px;
+                Text { text: root.m.name; font-size: 17px; font-weight: 600; color: Theme.text; vertical-alignment: center; }
+                if root.m.recommended: VerticalLayout { alignment: center; Tag { text: "Recommended"; kind: 1; } }
+            }
+            VerticalLayout {
+                alignment: start;
+                Rectangle {
+                    width: 20px;
+                    height: 20px;
+                    border-radius: 10px;
+                    border-width: 2px;
+                    border-color: root.selected ? Theme.accent : (Theme.dark ? #6b675c : #a9a597);
+                    background: root.selected ? Theme.accent : transparent;
+                    if root.selected: Icon { x: 3px; y: 3px; path: Icons.check; size: 12px; stroke-px: 3.4px; color: Theme.on-accent; }
+                }
+            }
+        }
+        Text { text: root.m.langs; font-size: 14px; color: Theme.nav; overflow: elide; }
+        HorizontalLayout {
+            spacing: 24px;
+            VerticalLayout { spacing: 2px; Text { text: "Download"; font-size: 12px; color: Theme.muted; } Text { text: root.m.size; font-size: 14px; font-weight: 500; color: Theme.text; } }
+            VerticalLayout { spacing: 2px; Text { text: "Speed"; font-size: 12px; color: Theme.muted; } Text { text: root.m.speed; font-size: 14px; font-weight: 500; color: Theme.text; } }
+            VerticalLayout { spacing: 2px; Text { text: "Accuracy"; font-size: 12px; color: Theme.muted; } Text { text: root.m.acc; font-size: 14px; font-weight: 500; color: Theme.text; } }
+            Rectangle { horizontal-stretch: 1; }
+        }
+        // Bottom row: download progress, a problem, the state, or the Download button.
+        Rectangle {
+            height: 30px;
+            if root.m.downloading: VerticalLayout {
+                alignment: center;
+                spacing: 6px;
+                Rectangle {
+                    height: 6px;
+                    border-radius: 3px;
+                    background: Theme.line;
+                    clip: true;
+                    Rectangle { x: 0; width: parent.width * root.m.progress; background: Theme.accent; }
+                }
+                HorizontalLayout {
+                    Text { text: "Downloading… \{root.m.percent}%"; font-size: 12px; color: Theme.muted; horizontal-stretch: 1; }
+                    Text { text: "You can continue while it downloads"; font-size: 12px; color: Theme.muted; }
+                }
+            }
+            if !root.m.downloading && root.m.error != "": Text {
+                text: root.m.error;
+                font-size: 12px;
+                color: Theme.danger;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            if !root.m.downloading && root.m.error == "" && root.m.installed: HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                Icon { path: Icons.check; size: 14px; stroke-px: 2.2px; color: Theme.teal; y: (parent.height - self.height) / 2; }
+                Text { text: root.m.status; font-size: 13px; font-weight: 600; color: Theme.teal; vertical-alignment: center; }
+            }
+            if !root.m.downloading && root.m.error == "" && !root.m.installed: HorizontalLayout {
+                alignment: space-between;
+                Text { text: "Not downloaded"; font-size: 12px; color: Theme.muted; vertical-alignment: center; }
+                if root.selected: LineButton {
+                    text: "Download";
+                    icon: Icons.download;
+                    height: 30px;
+                    clicked => { SetupState.download-model(root.m.id); }
+                }
+            }
+        }
+    }
+}
+
+component ModelStep inherits VerticalLayout {
+    padding-left: 48px;
+    padding-right: 48px;
+    padding-top: 30px;
+    spacing: 22px;
+    alignment: start;
+    Heading { title: "Choose a speech model"; sub: "It downloads once and runs fully on this PC. You can switch any time in Settings."; }
+    Rectangle {
+        height: 2 * 176px + 14px;
+        for m[i] in SetupState.models: ModelOption {
+            m: m;
+            x: mod(i, 2) * (self.width + 14px);
+            y: floor(i / 2) * (self.height + 14px);
+            width: (parent.width - 14px) / 2;
+            height: 176px;
+        }
+    }
+}
+
+// ---------- 3 · Microphone ----------
+
+component MicStep inherits VerticalLayout {
+    padding-left: 48px;
+    padding-right: 48px;
+    padding-top: 30px;
+    spacing: 26px;
+    alignment: start;
+    Heading { title: "Check your microphone"; sub: "Pick the mic you talk into, then make sure Hamsa can hear you clearly."; }
+    HorizontalLayout {
+        spacing: 32px;
+        alignment: start;
+        VerticalLayout {
+            width: 387px;
+            spacing: 24px;
+            alignment: start;
+            VerticalLayout {
+                spacing: 8px;
+                Text { text: "Microphone"; font-size: 13px; font-weight: 600; color: Theme.text; }
+                Select {
+                    options: SetupState.microphones;
+                    selected <=> SetupState.microphone;
+                    width: 387px;
+                    height: 46px;
+                    picked(i) => { SetupState.pick-mic(i); }
+                }
+            }
+            VerticalLayout {
+                spacing: 10px;
+                Text { text: "Input level"; font-size: 13px; font-weight: 600; color: Theme.text; }
+                Rectangle {
+                    height: 66px;
+                    border-radius: 12px;
+                    background: Theme.card;
+                    border-width: 1px;
+                    border-color: Theme.line;
+                    accessible-role: progress-indicator;
+                    accessible-label: "Input level";
+                    accessible-value: "\{round(SetupState.level * 100)}";
+                    HorizontalLayout {
+                        padding: 12px;
+                        padding-left: 14px;
+                        padding-right: 14px;
+                        spacing: 4px;
+                        for i in 24: VerticalLayout {
+                            alignment: end;
+                            Rectangle {
+                                height: 8px + i * 1.3px;
+                                border-radius: 2px;
+                                background: i + 0.5 < SetupState.level * 24 ? (i > 19 ? (Theme.dark ? #f5c26b : #d9961a) : Theme.text) : Theme.track-off;
+                            }
+                        }
+                    }
+                }
+                Text {
+                    text: SetupState.mic-error != "" ? SetupState.mic-error : "Talk normally. The bars should reach about halfway.";
+                    font-size: 13px;
+                    line-height-factor: 1.2;
+                    color: SetupState.mic-error != "" ? Theme.danger : Theme.muted;
+                    wrap: word-wrap;
+                }
+            }
+        }
+        Rectangle {
+            width: 445px;
+            height: tp.preferred-height;
+            border-radius: 18px;
+            background: Theme.card;
+            border-width: 1px;
+            border-color: Theme.line;
+            tp := VerticalLayout {
+                padding-left: 24px;
+                padding-right: 24px;
+                padding-top: 22px;
+                padding-bottom: 24px;
+                spacing: 16px;
+                HorizontalLayout {
+                    spacing: 12px;
+                    Text { text: "Test"; font-size: 17px; font-weight: 600; color: Theme.text; vertical-alignment: center; horizontal-stretch: 1; }
+                    LineButton {
+                        text: SetupState.test-phase == 1 ? "Listening…" : SetupState.test-phase == 2 ? "Working…" : SetupState.test-phase == 3 ? "Test again" : "Test";
+                        icon: Icons.mic;
+                        enabled: SetupState.test-phase != 1 && SetupState.test-phase != 2;
+                        clicked => { SetupState.run-test(); }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    Text { text: "Say:"; font-size: 22px; font-weight: 500; color: Theme.text; }
+                    Text { text: "The quick brown fox…"; font-size: 22px; font-weight: 500; color: Theme.nav; }
+                }
+                if SetupState.model-ready: Rectangle {
+                    height: 78px;
+                    border-radius: 12px;
+                    background: Theme.bg;
+                    border-width: 1px;
+                    border-color: Theme.line;
+                    VerticalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        padding-top: 14px;
+                        padding-bottom: 14px;
+                        spacing: 8px;
+                        Text { text: "HAMSA HEARD"; font-size: 12px; font-weight: 600; letter-spacing: 0.72px; color: Theme.muted; }
+                        Text {
+                            text: SetupState.heard != "" ? SetupState.heard : "Your words appear here.";
+                            font-size: 16px;
+                            color: SetupState.heard != "" ? Theme.text : Theme.muted;
+                            overflow: elide;
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    if SetupState.verdict == 1: Icon { path: Icons.check; size: 18px; stroke-px: 2.2px; color: Theme.teal; y: 1px; }
+                    if SetupState.verdict == 2: Icon {
+                        path: "M12 3 2.5 20h19zM12 10v4.5M12 17.5h.01";
+                        size: 18px;
+                        stroke-px: 2px;
+                        color: Theme.dark ? #f5c26b : #b27410;
+                        y: 1px;
+                    }
+                    Text {
+                        text: SetupState.test-status;
+                        font-size: 14px;
+                        font-weight: 600;
+                        wrap: word-wrap;
+                        color: SetupState.verdict == 1 ? Theme.teal : SetupState.verdict == 2 ? (Theme.dark ? #f5c26b : #b27410) : Theme.nav;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------- 4 · Try it ----------
+
+component PracticeBox inherits Rectangle {
+    height: 161px;
+    border-radius: 16px;
+    background: Theme.card;
+    border-width: 1px;
+    border-color: Theme.input-line;
+    if ti.has-focus: Rectangle {
+        x: -3px;
+        y: -3px;
+        width: parent.width + 6px;
+        height: parent.height + 6px;
+        border-radius: 19px;
+        border-width: 2px;
+        border-color: Theme.accent;
+    }
+    VerticalLayout {
+        Rectangle {
+            height: 49px;
+            HorizontalLayout {
+                padding-left: 18px;
+                padding-right: 18px;
+                spacing: 8px;
+                alignment: start;
+                Text { text: "Click here, then hold"; font-size: 14px; color: Theme.nav; vertical-alignment: center; }
+                VerticalLayout {
+                    alignment: center;
+                    Keycaps {
+                        labels: SetupState.shortcut;
+                        size: 0;
+                        face: Theme.key-face;
+                        edge: Theme.key-edge;
+                        shadow-color: Theme.dark ? #4d4a42 : #000000;
+                    }
+                }
+                Text { text: "and say something"; font-size: 14px; color: Theme.nav; vertical-alignment: center; }
+            }
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
+        }
+        Rectangle {
+            height: 112px;
+            TouchArea { clicked => { ti.focus(); } }
+            Text {
+                x: 18px;
+                y: 16px;
+                width: parent.width - 36px;
+                visible: SetupState.practice-text == "";
+                text: "What you dictate appears here.";
+                font-size: 16px;
+                color: Theme.muted;
+            }
+            ti := TextInput {
+                x: 18px;
+                y: 16px;
+                width: parent.width - 36px;
+                height: parent.height - 32px;
+                text <=> SetupState.practice-text;
+                color: Theme.text;
+                font-size: 16px;
+                single-line: false;
+                wrap: word-wrap;
+                accessible-label: "Practice box";
+                selection-background-color: Theme.accent.with-alpha(0.25);
+            }
+        }
+    }
+}
+
+// Shown in place of the practice prompt while no speech model can transcribe yet.
+component PracticeWait inherits Rectangle {
+    height: 161px;
+    border-radius: 16px;
+    background: Theme.card;
+    border-width: 1px;
+    border-color: Theme.line;
+    VerticalLayout {
+        alignment: center;
+        padding: 24px;
+        spacing: 8px;
+        Text { text: SetupState.model-line; font-size: 16px; font-weight: 500; color: Theme.text; wrap: word-wrap; horizontal-alignment: center; }
+        Text { text: "You can keep going: the practice box opens once the model is ready."; font-size: 13px; color: Theme.muted; wrap: word-wrap; horizontal-alignment: center; }
+    }
+}
+
+component TryStep inherits VerticalLayout {
+    padding-left: 48px;
+    padding-right: 48px;
+    padding-top: 30px;
+    spacing: 22px;
+    alignment: start;
+    Heading { title: "Try it out"; sub: "Speak into the practice box below. This is exactly how it works in any app."; }
+    HorizontalLayout {
+        spacing: 28px;
+        alignment: start;
+        VerticalLayout {
+            width: 472px;
+            alignment: start;
+            if SetupState.model-ready: PracticeBox { }
+            if !SetupState.model-ready: PracticeWait { }
+        }
+        VerticalLayout {
+            width: 364px;
+            spacing: 16px;
+            alignment: start;
+            VerticalLayout {
+                spacing: 4px;
+                Text { text: "Hands-free"; font-size: 15px; font-weight: 600; color: Theme.text; }
+                Hold { before: "Double-tap"; keys: SetupState.shortcut; after: "and let go."; }
+                Text { text: "Hamsa keeps listening until you tap once to finish."; font-size: 14px; line-height-factor: 1.2; color: Theme.nav; wrap: word-wrap; }
+            }
+            VerticalLayout {
+                spacing: 4px;
+                Text { text: "Changed your mind?"; font-size: 15px; font-weight: 600; color: Theme.text; }
+                Hold { before: "Press"; keys: ["Esc"]; after: "to cancel. Nothing is pasted."; }
+            }
+        }
+    }
+    Rectangle {
+        height: 76px;
+        border-radius: 16px;
+        background: Theme.card;
+        border-width: 1px;
+        border-color: Theme.line;
+        HorizontalLayout {
+            padding-left: 20px;
+            padding-right: 20px;
+            spacing: 20px;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                spacing: 4px;
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: start;
+                    Text { text: "Smart cleanup"; font-size: 15px; font-weight: 600; color: Theme.text; vertical-alignment: center; }
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            height: 22px;
+                            width: badge.preferred-width + 16px;
+                            border-radius: 11px;
+                            background: Theme.hover;
+                            border-width: 1px;
+                            border-color: Theme.line;
+                            badge := Text { text: SetupState.cleanup-badge; font-size: 12px; font-weight: 500; color: Theme.nav; }
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 5px;
+                    alignment: start;
+                    Text { text: "Removes um/uh and fixes self-corrections."; font-size: 13px; color: Theme.muted; }
+                    Text { text: SetupState.cleanup-note; font-size: 13px; color: Theme.nav; }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Switch {
+                    on <=> SetupState.cleanup-on;
+                    toggled(v) => { SetupState.set-cleanup(v); }
+                }
+            }
+        }
+    }
+}
+
+// ---------- 5 · Ready ----------
+
+component SummaryRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <string> note;
+    in property <string> change-label;
+    in property <bool> last;
+    callback change();
+    height: 56px;
+    HorizontalLayout {
+        padding-left: 20px;
+        padding-right: 20px;
+        spacing: 16px;
+        Text { text: root.label; width: 140px; font-size: 14px; color: Theme.muted; vertical-alignment: center; }
+        HorizontalLayout {
+            horizontal-stretch: 1;
+            spacing: 8px;
+            alignment: start;
+            Text { text: root.value; font-size: 15px; font-weight: 500; color: Theme.text; vertical-alignment: center; }
+            if root.note != "": Text { text: root.note; font-size: 13px; color: Theme.muted; vertical-alignment: center; }
+        }
+        ChangeLink { label: root.change-label; clicked => { root.change(); } }
+    }
+    if !root.last: Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
+}
+
+component OptionRow inherits Rectangle {
+    in property <string> title;
+    in property <string> detail;
+    in property <bool> last;
+    in-out property <bool> on;
+    callback toggled(bool);
+    height: 66px;
+    HorizontalLayout {
+        padding-left: 20px;
+        padding-right: 20px;
+        spacing: 16px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 3px;
+            Text { text: root.title; font-size: 15px; font-weight: 600; color: Theme.text; }
+            Text { text: root.detail; font-size: 13px; color: Theme.muted; }
+        }
+        VerticalLayout {
+            alignment: center;
+            Switch {
+                on <=> root.on;
+                toggled(v) => { root.toggled(v); }
+            }
+        }
+    }
+    if !root.last: Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
+}
+
+component ReadyStep inherits VerticalLayout {
+    padding-left: 48px;
+    padding-right: 48px;
+    padding-top: 30px;
+    spacing: 22px;
+    alignment: start;
+    Heading { title: "You're ready to dictate"; sub: "Here is what you chose. Two last options, then you're done."; }
+    VerticalLayout {
+        spacing: 10px;
+        Text { text: "YOUR CHOICES"; font-size: 12px; font-weight: 600; letter-spacing: 0.72px; color: Theme.muted; }
+        Rectangle {
+            height: 3 * 56px + 2px;
+            border-radius: 16px;
+            background: Theme.card;
+            border-width: 1px;
+            border-color: Theme.line;
+            clip: true;
+            VerticalLayout {
+                SummaryRow {
+                    label: "Speech model";
+                    value: SetupState.summary-model;
+                    note: SetupState.summary-model-note;
+                    change-label: "Change speech model";
+                    change => { SetupState.go(2); }
+                }
+                SummaryRow {
+                    label: "Microphone";
+                    value: SetupState.summary-mic;
+                    change-label: "Change microphone";
+                    change => { SetupState.go(3); }
+                }
+                SummaryRow {
+                    label: "Smart cleanup";
+                    value: SetupState.summary-cleanup;
+                    change-label: "Change smart cleanup";
+                    last: true;
+                    change => { SetupState.go(4); }
+                }
+            }
+        }
+    }
+    Rectangle {
+        height: 2 * 66px + 2px;
+        border-radius: 16px;
+        background: Theme.card;
+        border-width: 1px;
+        border-color: Theme.line;
+        clip: true;
+        VerticalLayout {
+            OptionRow {
+                title: "Start Hamsa when Windows starts";
+                detail: "Runs quietly in the tray, ready for " + (SetupState.shortcut.length > 0 ? SetupState.shortcut[0] : "") + (SetupState.shortcut.length > 1 ? "+" + SetupState.shortcut[1] : "");
+                on <=> SetupState.start-windows;
+            }
+            OptionRow {
+                title: "Show the bar when idle";
+                detail: "Off: it appears only while you dictate.";
+                last: true;
+                on <=> SetupState.bar-visible;
+                toggled(v) => { SetupState.set-bar(v); }
+            }
+        }
+    }
+}
+
+// ---------- The window ----------
+
+export component SetupWindow inherits Window {
+    title: "Hamsa Beta setup";
+    icon: @image-url("../assets/app-icon.png");
+    preferred-width: 960px;
+    preferred-height: 680px;
+    min-width: 960px;
+    max-width: 960px;
+    min-height: 680px;
+    max-height: 680px;
+    background: Theme.panel-bg;
+    default-font-family: Theme.font;
+
+    VerticalLayout {
+        // Header: the wordmark (not on the welcome step) and the step indicator.
+        Rectangle {
+            height: 68px;
+            HorizontalLayout {
+                padding-left: 32px;
+                padding-right: 32px;
+                spacing: 14px;
+                HorizontalLayout {
+                    horizontal-stretch: 1;
+                    alignment: start;
+                    if SetupState.step > 1: VerticalLayout {
+                        alignment: center;
+                        Image { source: @image-url("../assets/hamsa-wordmark.svg"); width: 72px; height: 24px; colorize: Theme.text; }
+                    }
+                }
+                Dots { }
+                Text { text: "\{SetupState.step} of 5"; font-size: 13px; font-weight: 500; color: Theme.nav; vertical-alignment: center; }
+            }
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.side-line; }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            if SetupState.step == 1: WelcomeStep { padding-left: 64px; padding-right: 64px; }
+            if SetupState.step == 2: ModelStep { }
+            if SetupState.step == 3: MicStep { }
+            if SetupState.step == 4: TryStep { }
+            if SetupState.step == 5: ReadyStep { }
+        }
+
+        // Footer: Back on the left, the way forward on the right.
+        Rectangle {
+            height: 84px;
+            Rectangle { y: 0; height: 1px; background: Theme.side-line; }
+            HorizontalLayout {
+                padding-left: 32px;
+                padding-right: 32px;
+                spacing: 20px;
+                HorizontalLayout {
+                    horizontal-stretch: 1;
+                    alignment: start;
+                    spacing: 20px;
+                    if SetupState.step == 1: VerticalLayout {
+                        alignment: center;
+                        Text { text: "Setup takes about two minutes."; font-size: 13px; color: Theme.muted; }
+                    }
+                    if SetupState.step > 1: VerticalLayout {
+                        alignment: center;
+                        LineButton { text: "Back"; height: 44px; clicked => { SetupState.back(); } }
+                    }
+                    if SetupState.step == 5: VerticalLayout {
+                        alignment: center;
+                        Text { text: "You can change all of this in Settings."; font-size: 13px; color: Theme.muted; }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    if SetupState.step == 1: SolidButton {
+                        text: "Get started";
+                        icon: Icons.arrow-right;
+                        icon-after: true;
+                        pad: 26px;
+                        height: 44px;
+                        clicked => { SetupState.next(); }
+                    }
+                    if SetupState.step > 1 && SetupState.step < 5: SolidButton {
+                        text: "Continue";
+                        icon: Icons.arrow-right;
+                        icon-after: true;
+                        pad: 26px;
+                        height: 44px;
+                        clicked => { SetupState.next(); }
+                    }
+                    if SetupState.step == 5: SolidButton {
+                        text: "Start dictating";
+                        icon: Icons.mic;
+                        pad: 26px;
+                        height: 44px;
+                        clicked => { SetupState.finish(); }
+                    }
+                }
+            }
+        }
+    }
+}

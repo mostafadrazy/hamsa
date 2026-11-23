@@ -1,0 +1,93 @@
+// Hamsa design tokens: light and OLED dark, from the design canvas.
+import "../assets/fonts/ReadexPro-Latin.ttf";
+import "../assets/fonts/ReadexPro-LatinExt.ttf";
+import "../assets/fonts/ReadexPro-Arabic.ttf";
+
+export global Theme {
+    in-out property <bool> dark: false;
+
+    out property <color> bg: dark ? #000000 : #ffffff;
+    out property <color> side: dark ? #0b0b0a : #f7f6f2;
+    out property <color> side-line: dark ? #1d1c1a : #ebe9e3;
+    out property <color> line: dark ? #1f1e1b : #e9e7e0;
+    out property <color> text: dark ? #f5f4f0 : #0b0b0a;
+    out property <color> muted: dark ? #a39d8e : #6b675d;
+    out property <color> nav: dark ? #c5c0b3 : #4d4a42;
+    out property <color> hover: dark ? #1a1917 : #eeece6;
+    out property <color> active: dark ? #1f1e1b : #e9e7e0;
+    out property <color> card: dark ? #0e0e0d : #ffffff;
+    out property <color> chip: dark ? #0e0e0d : #f7f6f2;
+    out property <color> row-hover: dark ? #0e0e0d : #faf9f6;
+    out property <color> seg: dark ? #0e0e0d : #f4f3ef;
+    out property <color> input-line: dark ? #4d4a42 : #c8c5bc;
+    out property <color> track-off: dark ? #3a3833 : #d6d3cb;
+    out property <color> accent: dark ? #f5f4f0 : #000000;
+    out property <color> on-accent: dark ? #000000 : #ffffff;
+    out property <color> accent-hover: dark ? #ffffff : #2a2a28;
+    out property <color> ok: dark ? #34d399 : #18a558;
+    out property <color> teal-bg: dark ? #072a25 : #d1f2ee;
+    out property <color> teal: dark ? #8de3d6 : #034f46;
+    out property <color> hero: dark ? #ffffff : #f2f1ec;
+    out property <color> tag-soft: dark ? #1f1e1b : #f0eee8;
+    out property <color> tag-soft-text: dark ? #c5c0b3 : #4d4a42;
+    out property <color> danger: #d93f2b;
+    // Dictation bar
+    out property <color> pill: dark ? #f5f4f0 : #000000;
+    out property <color> pill-fg: dark ? #000000 : #ffffff;
+    out property <color> pill-soft: dark ? #deddd7 : #343432;
+
+    out property <string> font: "Readex Pro";
+
+    // Where the canvas boards (Warm · OLED / Hamsa · Light) style the two themes differently.
+    out property <length> title-spacing: dark ? -0.66px : -0.88px; // -0.015em / -0.02em at 44 px
+    out property <length> hero-size: dark ? 34px : 32px;
+    out property <float> hero-line: dark ? 0.88 : 0.92; // CSS 1.1 / 1.15 ÷ the font's natural 1.25
+    out property <length> hero-spacing: dark ? 0px : -0.48px;
+    out property <int> key-weight: dark ? 800 : 700;
+    // Medium keycaps in Settings: a light face on OLED, the white-and-black key on Light.
+    out property <color> key-face: dark ? #f5f4f0 : #ffffff;
+    out property <color> key-edge: dark ? #f5f4f0 : #000000;
+    out property <color> key-shadow: dark ? #8a8578 : #000000;
+    out property <bool> link-underline: !dark;
+    out property <color> panel-bg: dark ? #0b0b0a : #ffffff;
+    out property <length> panel-title-size: dark ? 24px : 22px;
+    out property <length> panel-title-spacing: dark ? 0px : -0.22px;
+    out property <length> h2-size: dark ? 28px : 26px;
+    out property <length> h2-spacing: dark ? 0px : -0.39px;
+    out property <color> line-bg: dark ? transparent : #ffffff;
+    out property <color> line-hover: dark ? #1a1917 : #f4f3ef;
+    out property <color> switch-on: dark ? #ffffff : #000000;
+    out property <color> switch-on-knob: dark ? #000000 : #ffffff;
+    out property <color> switch-off-knob: dark ? #c5c0b3 : #ffffff;
+    out property <bool> pill-shadow: !dark;
+}
+
+// Stroke icons, 24 × 24 (same paths as the web version).
+export global Icons {
+    out property <string> home: "M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z";
+    out property <string> book: "M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5zM4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5";
+    out property <string> bolt: "M13 2 4 14h7l-1 8 9-12h-7z";
+    out property <string> pen: "M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16zM13.5 6.5l4 4";
+    out property <string> note: "M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M8 13h8M8 17h5";
+    out property <string> gear: "M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6";
+    out property <string> help: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01";
+    // Canvas: <rect x="9" y="9" width="12" height="12" rx="2"> + the back sheet.
+    out property <string> copy: "M11 9h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2zM5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1";
+    // Canvas: <rect x="9" y="3" width="6" height="11" rx="3"> + stand.
+    out property <string> mic: "M12 3a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zM5 11a7 7 0 0 0 14 0M12 18v3";
+    out property <string> x: "M18 6 6 18M6 6l12 12";
+    out property <string> check: "M5 12l5 5L20 7";
+    out property <string> download: "M12 3v12m0 0-4-4m4 4 4-4M4 19h16";
+    out property <string> paste: "M8 3h8v4H8zM8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2";
+    out property <string> lines: "M4 6h16M4 12h10M4 18h7";
+    out property <string> eye: "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z";
+    out property <string> arrow-down: "M12 4v12M6 10l6 6 6-6M5 20h14";
+    out property <string> arrow-up: "M12 20V8M6 14l6-6 6 6M5 4h14";
+    out property <string> window: "M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM9 4v16";
+    out property <string> plus: "M12 5v14M5 12h14";
+    out property <string> search: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-3.5-3.5";
+    out property <string> trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3";
+    out property <string> arrow-right: "M5 12h14M13 6l6 6-6 6";
+    out property <string> lock: "M6 11h12a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1zM8 11V8a4 4 0 0 1 8 0v3";
+    out property <string> power: "M12 3v9M6.3 7.3a8 8 0 1 0 11.4 0";
+}

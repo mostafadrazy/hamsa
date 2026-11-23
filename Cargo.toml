@@ -1,0 +1,46 @@
+# One workspace (and one shared `target/` folder) for Hamsa Beta.
+[workspace]
+resolver = "2"
+members = ["phonon", "core", "beta"]
+
+# Dev builds: small debug info (full debug info made build folders tens of GB).
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+# The speech engine and its numeric dependencies are far too slow unoptimised; optimise them even in dev builds.
+[profile.dev.package.phonon]
+opt-level = 3
+[profile.dev.package.matrixmultiply]
+opt-level = 3
+[profile.dev.package.rustfft]
+opt-level = 3
+[profile.dev.package.realfft]
+opt-level = 3
+[profile.dev.package.zstd-sys]
+opt-level = 3
+[profile.dev.package.rubato]
+opt-level = 3
+[profile.dev.package.rayon-core]
+opt-level = 3
+[profile.dev.package.half]
+opt-level = 3
+[profile.dev.package.wgpu]
+opt-level = 3
+[profile.dev.package.wgpu-core]
+opt-level = 3
+[profile.dev.package.wgpu-hal]
+opt-level = 3
+[profile.dev.package.naga]
+opt-level = 3
+# The Slint software renderer draws every pixel on the CPU: optimise it too.
+[profile.dev.package.i-slint-core]
+opt-level = 3
+[profile.dev.package.i-slint-renderer-software]
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+codegen-units = 4

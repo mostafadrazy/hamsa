@@ -1,0 +1,29 @@
+﻿# Hamsa Beta public repo: allow-list. Everything is ignored except the Beta workspace.
+/*
+!/.gitignore
+!/Cargo.toml
+!/Cargo.lock
+!/LICENSE
+!/NOTICE.md
+!/README.md
+!/docs/
+!/beta/
+!/core/
+!/phonon/
+
+# Build output and stray artifacts, even inside allowed folders
+target/
+**/target/
+# Per-crate lockfiles (the workspace uses the root Cargo.lock)
+/beta/Cargo.lock
+/core/Cargo.lock
+/phonon/Cargo.lock
+*.exe
+*.zip
+*.gguf
+*.fermion
+*.bps*
+*.tar.zst
+*.log
+node_modules/
+dist/

@@ -1,0 +1,28 @@
+[package]
+name = "phonon"
+version = "0.1.0"
+edition = "2021"
+description = "Phonon-2.5 speech recognition (Parakeet TDT with five-value weights) in pure Rust"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+bytemuck = "1"
+half = "2"
+pollster = "0.3"
+wgpu = "22"
+matrixmultiply = "0.3"
+rayon = "1"
+realfft = "3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tar = "0.4"
+zstd = "0.13"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
+
+[dev-dependencies]
+hound = "3.5"
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_Threading"] }

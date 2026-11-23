@@ -1,0 +1,2006 @@
+// The main window: sidebar and pages, laid out to the web version's measurements (hub.css) at 1 px = 1 CSS px.
+import { ScrollView, AboutSlint } from "std-widgets.slint";
+import { Theme, Icons } from "theme.slint";
+import { Icon, Keycaps, SolidButton, LineButton, IconButton, Seg, CountSeg, SearchBox, Tabs, Switch, Chip, Tag, Field, Area, Select, Panel, PanelTitle, SettingRow, Divider, EmptyState } from "widgets.slint";
+
+export struct HistoryItem {
+    time: string,
+    text: string,
+}
+
+export struct HistoryGroup {
+    label: string,
+    items: [HistoryItem],
+}
+
+export struct DictEntry {
+    spoken: string,
+    text: string,
+    same: bool,
+    index: int, // position in the saved dictionary
+    x: length, // where a word chip sits in its wrapping layout
+    y: length,
+}
+
+export struct SnippetEntry {
+    spoken: string,
+    text: string,
+    first-line: string,
+    index: int, // position in the saved snippets
+}
+
+export struct NoteEntry {
+    id: string,
+    title: string,
+    meta: string, // "Today · 214 words"
+}
+
+export struct ModelCard {
+    id: string,
+    name: string,
+    tag: string,
+    tag-kind: int,
+    blurb: string,
+    status-ok: bool,
+    languages: string,
+    size: string,
+    status: string,
+    device: string,
+    installed: bool,
+    active: bool,
+    loading: bool,
+    downloading: bool,
+    progress: float,
+    error: string,
+    removable: bool,
+}
+
+// Everything the main window shows, set from Rust; and what it asks Rust to do.
+export global AppState {
+    in-out property <int> page: 0; // 0 home, 1 dictionary, 2 snippets, 3 style, 4 notes, 5 settings, 6 help
+    in-out property <int> settings-tab: 0; // 0 general, 1 dictation, 2 models, 3 privacy
+
+    // Sidebar model card
+    in property <string> model-title: "No speech model";
+    in property <string> model-line: "Download a model to start dictating.";
+    in property <bool> model-ok;
+
+    // Home
+    in property <[string]> shortcut: ["Ctrl", "Win"];
+    in property <string> streak: "0 day streak";
+    in property <string> week: "0 words this week";
+    in property <string> wpm: "0 wpm";
+    in property <bool> has-model;
+    in property <string> active-name;
+    in property <int> status-kind; // 0 none, 1 info, 2 error
+    in property <string> status-title;
+    in property <string> status-body;
+    in property <bool> status-get-model;
+    in property <[HistoryGroup]> history;
+
+    // Dictionary and snippets
+    in property <[DictEntry]> chips; // plain words, with chip positions
+    in property <length> chips-height;
+    in property <[DictEntry]> replacements;
+    in property <int> dict-total;
+    in property <int> count-all;
+    in property <int> count-words;
+    in property <int> count-repl;
+    in property <string> words-error;
+    in property <[SnippetEntry]> snippets; // all of them
+    in property <[SnippetEntry]> snippet-list; // the ones matching the search
+    in property <string> snippets-error;
+
+    // Notes
+    in property <[NoteEntry]> notes; // the ones matching the search
+    in property <int> notes-total;
+    in-out property <string> note-id; // the open note, or "" for none
+    in-out property <string> note-title; // the open note's first line
+    in-out property <string> note-body; // the rest
+    in property <string> note-meta;
+
+    // Settings · General
+    in-out property <int> theme-choice; // 0 system, 1 light, 2 dark
+    in property <int> capture-mode; // 0 idle, 1 listening, 2 review
+    in property <[string]> captured;
+    in property <string> capture-error;
+    in property <[string]> microphones;
+    in-out property <int> microphone;
+    in-out property <bool> bar-visible;
+    in-out property <bool> bar-preview;
+    in-out property <int> bar-position; // 0 bottom, 1 top, 2 custom
+
+    // Settings · Models
+    in property <[ModelCard]> models;
+    in property <[ModelCard]> darija-models; // the Darija cards, in their own row
+    in-out property <int> compute; // 0 auto, 1 gpu, 2 cpu
+    in property <string> device-line;
+    in property <string> device-note;
+    in property <[string]> languages;
+    in-out property <int> language;
+    in property <bool> multilingual-active;
+    in property <bool> darija-active;
+    in property <string> models-dir;
+
+    // Style · Formatting switches
+    in-out property <bool> fmt-capitalize: true;
+    in-out property <bool> fmt-end: true;
+    in-out property <bool> fmt-fillers: true;
+    in-out property <bool> fmt-smart: false;
+    in-out property <bool> fmt-lists: true;
+    in-out property <int> fmt-bullet; // 0 dot, 1 dash
+    // Settings · Hands-free: double-tap the shortcut to keep listening
+    in-out property <bool> hands-free: true;
+    callback set-hands-free(bool);
+    // Settings · General · Start with Windows (the Run key is the source of truth), and the first-run setup
+    in-out property <bool> start-with-windows;
+    callback set-start-with-windows(bool);
+    callback run-setup();
+    // Settings · Models · Smart cleanup
+    in-out property <bool> cleanup-on;
+    in-out property <int> cleanup-size; // 0 standard, 1 small
+    in property <string> cleanup-status: "Not downloaded";
+    in property <int> cleanup-state; // 0 not downloaded, 1 downloading, 2 downloaded or ready, 3 error
+    in property <float> cleanup-progress;
+    callback set-cleanup(bool);
+    callback set-cleanup-size(int);
+    callback download-cleanup();
+    callback remove-cleanup();
+    callback set-formatting(bool, bool, bool, bool, bool, int); // capitalize, end punctuation, fillers, smart punctuation, lists, bullet style
+
+    callback try-dictation();
+    callback copy-text(string);
+    callback add-word(string, string) -> bool;
+    callback update-word(int, string, string) -> bool;
+    callback dict-view(string, int); // search text, filter (0 all, 1 words, 2 replacements)
+    callback chip-width(length);
+    callback snippet-view(string);
+    callback remove-word(int);
+    callback save-snippet(string, string, int) -> bool;
+    callback remove-snippet(int);
+    callback notes-opened(); // the Notes page appeared
+    callback notes-view(string); // search text
+    callback new-note();
+    callback open-note(string);
+    callback edit-note(string, string); // title, body: typed by hand
+    callback copy-note();
+    callback delete-note();
+    callback page-changed(int);
+    callback set-theme(int);
+    callback begin-capture();
+    callback cancel-capture();
+    callback save-capture();
+    callback set-microphone(int);
+    callback set-bar(bool, bool, int);
+    callback set-compute(int);
+    callback set-language(int);
+    callback download-model(string);
+    callback use-model(string);
+    callback remove-model(string);
+    callback open-folder();
+}
+
+// ---------- Sidebar (.side) ----------
+
+component NavItem inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <bool> current;
+    callback clicked();
+    height: 40px;
+    border-radius: 10px;
+    background: current ? Theme.active : ta.has-hover ? Theme.hover : transparent;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 10px;
+        Icon {
+            path: root.icon;
+            color: root.current || ta.has-hover ? Theme.text : Theme.nav;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: root.label;
+            font-size: 14px;
+            font-weight: 500;
+            color: root.current || ta.has-hover ? Theme.text : Theme.nav;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component Sidebar inherits Rectangle {
+    width: 220px;
+    background: Theme.side;
+    Rectangle {
+        x: parent.width - 1px;
+        width: 1px;
+        background: Theme.side-line;
+    }
+    VerticalLayout {
+        padding-top: 20px;
+        padding-bottom: 20px;
+        padding-left: 14px;
+        padding-right: 15px;
+        spacing: 28px;
+        // .brand: the hamsa wordmark, 28 px tall
+        HorizontalLayout {
+            padding-left: 8px;
+            alignment: start;
+            Image {
+                source: @image-url("../assets/hamsa-wordmark.svg");
+                height: 28px;
+                width: 84px;
+                colorize: Theme.text;
+            }
+        }
+        VerticalLayout {
+            spacing: 2px;
+            NavItem { icon: Icons.home; label: "Home"; current: AppState.page == 0; clicked => { AppState.page = 0; } }
+            NavItem { icon: Icons.book; label: "Dictionary"; current: AppState.page == 1; clicked => { AppState.page = 1; } }
+            NavItem { icon: Icons.bolt; label: "Snippets"; current: AppState.page == 2; clicked => { AppState.page = 2; } }
+            NavItem { icon: Icons.pen; label: "Style"; current: AppState.page == 3; clicked => { AppState.page = 3; } }
+            NavItem { icon: Icons.note; label: "Notes"; current: AppState.page == 4; clicked => { AppState.page = 4; } }
+        }
+        Rectangle { vertical-stretch: 1; }
+        // .model-card
+        Rectangle {
+            border-radius: 14px;
+            background: Theme.card;
+            border-width: 1px;
+            border-color: Theme.line;
+            height: mc.preferred-height;
+            mc := VerticalLayout {
+                padding: 14px;
+                spacing: 10px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    Rectangle {
+                        width: 8px;
+                        height: 8px;
+                        y: (parent.height - 8px) / 2;
+                        border-radius: 4px;
+                        background: AppState.model-ok ? Theme.ok : Theme.track-off;
+                    }
+                    Text {
+                        text: AppState.model-title;
+                        font-size: 13px;
+                        font-weight: 600;
+                        color: Theme.text;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                    }
+                }
+                Text {
+                    text: AppState.model-line;
+                    font-size: 12px;
+                    line-height-factor: 1.16;
+                    color: Theme.muted;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    alignment: start;
+                    Rectangle {
+                        width: ml.preferred-width;
+                        height: ml.preferred-height + 4px;
+                        ml := Text {
+                            y: 0;
+                            text: "Change model";
+                            font-size: 12px;
+                            font-weight: 600;
+                            color: Theme.dark ? #ffffff : Theme.text;
+                        }
+                        if Theme.link-underline: Rectangle { y: ml.height + 2px; height: 1px; background: Theme.text; }
+                        TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                AppState.settings-tab = 2;
+                                AppState.page = 5;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        VerticalLayout {
+            spacing: 2px;
+            NavItem { icon: Icons.gear; label: "Settings"; current: AppState.page == 5; clicked => { AppState.page = 5; } }
+            NavItem { icon: Icons.help; label: "Help"; current: AppState.page == 6; clicked => { AppState.page = 6; } }
+        }
+    }
+}
+
+// ---------- Shared page pieces ----------
+
+// .page-title
+component PageTitle inherits Text {
+    font-size: 44px;
+    line-height-factor: 0.84; // CSS 1.05 ÷ the font's natural 1.25
+    font-weight: 500;
+    letter-spacing: Theme.title-spacing;
+    color: Theme.text;
+}
+
+// .lede (max-width 560 px)
+component Lede inherits Text {
+    font-size: 15px;
+    line-height-factor: 1.24;
+    color: Theme.muted;
+    wrap: word-wrap;
+}
+
+component PageHeader inherits VerticalLayout {
+    in property <string> title;
+    in property <string> lede;
+    spacing: 10px;
+    PageTitle { text: root.title; }
+    HorizontalLayout {
+        alignment: start;
+        Lede { text: root.lede; max-width: 560px; horizontal-stretch: 1; }
+    }
+}
+
+// .section-label
+component SectionLabel inherits Text {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.72px;
+    color: Theme.muted;
+}
+
+// .list: rounded box, rows separated by lines
+component ListBox inherits Rectangle {
+    border-radius: 16px;
+    border-width: 1px;
+    border-color: Theme.line;
+    clip: true;
+}
+
+// ---------- Home ----------
+
+component HomePage inherits VerticalLayout {
+    spacing: 32px;
+    // .page-head
+    HorizontalLayout {
+        spacing: 16px;
+        PageTitle { text: "Welcome back"; horizontal-stretch: 1; }
+        VerticalLayout {
+            alignment: end;
+            HorizontalLayout {
+                spacing: 8px;
+                Chip { text: AppState.streak; }
+                Chip { text: AppState.week; }
+                Chip { text: AppState.wpm; }
+            }
+        }
+    }
+    // .hero
+    Rectangle {
+        border-radius: 24px;
+        background: Theme.hero;
+        height: hero.preferred-height;
+        hero := VerticalLayout {
+            padding-top: 32px;
+            padding-bottom: 34px;
+            padding-left: 36px;
+            padding-right: 36px;
+            spacing: 26px;
+            Keycaps { labels: AppState.shortcut; size: 2; }
+            HorizontalLayout {
+                spacing: 20px;
+                VerticalLayout {
+                    spacing: 10px;
+                    horizontal-stretch: 1;
+                    // .hero h2: "Hold <strong>Ctrl + Win</strong> to dictate in any app"
+                    HorizontalLayout {
+                        alignment: start;
+                        Text { text: "Hold "; font-size: Theme.hero-size; font-weight: 500; letter-spacing: Theme.hero-spacing; line-height-factor: Theme.hero-line; color: #000000; }
+                        Text {
+                            text: AppState.shortcut.length > 1 ? AppState.shortcut[0] + " + " + AppState.shortcut[1] : AppState.shortcut.length > 0 ? AppState.shortcut[0] : "";
+                            font-size: Theme.hero-size;
+                            font-weight: 700;
+                            letter-spacing: Theme.hero-spacing;
+                            line-height-factor: Theme.hero-line;
+                            color: #000000;
+                        }
+                        Text { text: " to dictate in any app"; font-size: Theme.hero-size; font-weight: 500; letter-spacing: Theme.hero-spacing; line-height-factor: Theme.hero-line; color: #000000; overflow: elide; }
+                    }
+                    HorizontalLayout {
+                        alignment: start;
+                        Text {
+                            max-width: 520px;
+                            horizontal-stretch: 1;
+                            text: "Speak naturally, then let go to paste. " + (AppState.has-model ? "Everything is transcribed on this device with " + AppState.active-name + "." : "Download a speech model to get started.");
+                            font-size: 15px;
+                            line-height-factor: 1.24;
+                            color: #4d4a42;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+                VerticalLayout {
+                    alignment: end;
+                    // .btn-hero
+                    Rectangle {
+                        height: 46px;
+                        width: hb.preferred-width;
+                        border-radius: 23px;
+                        background: hba.has-hover ? #2a2a28 : #000000;
+                        hb := HorizontalLayout {
+                            padding-left: 22px;
+                            padding-right: 22px;
+                            spacing: 8px;
+                            Icon {
+                                path: AppState.has-model ? Icons.mic : Icons.download;
+                                color: #ffffff;
+                                size: 16px;
+                                stroke-px: 2px;
+                                y: (parent.height - self.height) / 2;
+                            }
+                            Text {
+                                text: AppState.has-model ? "Try it here" : "Get a speech model";
+                                color: #ffffff;
+                                font-size: 14px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                            }
+                        }
+                        hba := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                if AppState.has-model {
+                                    AppState.try-dictation();
+                                } else {
+                                    AppState.settings-tab = 2;
+                                    AppState.page = 5;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // .status: result of the last dictation
+    if AppState.status-kind != 0: Rectangle {
+        border-radius: 16px;
+        border-width: 1px;
+        border-color: AppState.status-kind == 2 ? Theme.danger : Theme.line;
+        background: Theme.card;
+        height: st.preferred-height;
+        st := VerticalLayout {
+            padding-top: 16px;
+            padding-bottom: 16px;
+            padding-left: 20px;
+            padding-right: 20px;
+            spacing: 4px;
+            Text { text: AppState.status-title; font-size: 15px; font-weight: 600; color: Theme.text; wrap: word-wrap; }
+            Text { text: AppState.status-body; font-size: 14px; line-height-factor: 1.2; color: Theme.muted; wrap: word-wrap; }
+            if AppState.status-get-model: HorizontalLayout {
+                alignment: start;
+                padding-top: 6px;
+                Text {
+                    text: "Get a model";
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: Theme.text;
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            AppState.settings-tab = 2;
+                            AppState.page = 5;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if AppState.history.length == 0: EmptyState {
+        title: "No dictations yet";
+        body: "Everything you dictate shows up here.";
+    }
+    for g in AppState.history: VerticalLayout {
+        spacing: 12px;
+        SectionLabel { text: g.label; }
+        ListBox {
+            height: rows.preferred-height;
+            rows := VerticalLayout {
+                for item[i] in g.items: Rectangle {
+                    height: row.preferred-height;
+                    background: ra.has-hover ? Theme.row-hover : transparent;
+                    ra := TouchArea { }
+                    if i > 0: Rectangle { y: 0; height: 1px; background: Theme.line; }
+                    // .history-row
+                    row := HorizontalLayout {
+                        padding-top: 16px;
+                        padding-bottom: 16px;
+                        padding-left: 20px;
+                        padding-right: 16px;
+                        spacing: 16px;
+                        VerticalLayout {
+                            width: 84px;
+                            alignment: start;
+                            padding-top: 2px;
+                            Text { text: item.time; font-size: 13px; color: Theme.muted; }
+                        }
+                        Text {
+                            horizontal-stretch: 1;
+                            text: item.text;
+                            font-size: 15px;
+                            line-height-factor: 1.28;
+                            color: Theme.text;
+                            wrap: word-wrap;
+                        }
+                        VerticalLayout {
+                            alignment: start;
+                            IconButton {
+                                icon: Icons.copy;
+                                clicked => { AppState.copy-text(item.text); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------- Dictionary ----------
+
+// A word chip: click it to edit, x to remove.
+component WordChip inherits Rectangle {
+    in property <string> text;
+    callback edit();
+    callback remove();
+    height: 38px;
+    width: ct.preferred-width + 16px + 4px + 28px + 6px + 2px;
+    border-radius: 19px;
+    background: ca.has-hover || xa.has-hover ? Theme.hover : Theme.chip;
+    border-width: 1px;
+    border-color: Theme.line;
+    ca := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.edit(); }
+    }
+    ct := Text {
+        x: 17px;
+        text: root.text;
+        font-size: 14px;
+        font-weight: 500;
+        color: Theme.text;
+        vertical-alignment: center;
+        height: parent.height;
+    }
+    Rectangle {
+        x: parent.width - 28px - 7px;
+        y: (parent.height - 28px) / 2;
+        width: 28px;
+        height: 28px;
+        border-radius: 14px;
+        background: xa.has-hover ? Theme.active : transparent;
+        Icon { path: Icons.x; size: 12px; stroke-px: 2.2px; color: xa.has-hover ? Theme.text : Theme.muted; }
+        xa := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.remove(); }
+        }
+    }
+}
+
+// .row: "spoken → written", with edit and delete shown on hover.
+component ReplacementRow inherits Rectangle {
+    in property <DictEntry> e;
+    in property <bool> first;
+    callback edit();
+    callback remove();
+    height: 56px;
+    background: ra.has-hover || eb.hovered || db.hovered ? Theme.row-hover : transparent;
+    ra := TouchArea { }
+    if !root.first: Rectangle { y: 0; height: 1px; background: Theme.line; }
+    HorizontalLayout {
+        padding-left: 20px;
+        padding-right: 12px;
+        spacing: 14px;
+        Text { text: root.e.spoken; font-size: 15px; color: Theme.text; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; preferred-width: 0px; min-width: 0px; }
+        Rectangle {
+            width: 28px;
+            Icon { path: Icons.arrow-right; size: 20px; color: Theme.muted; }
+        }
+        Text { text: root.e.text; font-size: 15px; font-weight: 500; color: Theme.text; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; preferred-width: 0px; min-width: 0px; }
+        HorizontalLayout {
+            spacing: 2px;
+            opacity: ra.has-hover || eb.hovered || db.hovered ? 1 : 0;
+            VerticalLayout {
+                alignment: center;
+                eb := IconButton { icon: Icons.pen; clicked => { root.edit(); } }
+            }
+            VerticalLayout {
+                alignment: center;
+                db := IconButton { icon: Icons.trash; clicked => { root.remove(); } }
+            }
+        }
+    }
+}
+
+component DictionaryPage inherits VerticalLayout {
+    property <string> word;
+    property <string> heard;
+    property <int> editing: -1; // index of the entry being edited, or -1 when adding
+    property <int> filter;
+    property <string> query;
+    spacing: 26px;
+    init => { AppState.dict-view("", 0); }
+    changed width => { AppState.chip-width(self.width); }
+
+    function reset() {
+        root.word = "";
+        root.heard = "";
+        root.editing = -1;
+    }
+    function submit() {
+        if root.word == "" { return; }
+        if root.editing >= 0 ? AppState.update-word(root.editing, root.word, root.heard) : AppState.add-word(root.word, root.heard) {
+            root.reset();
+        }
+    }
+    function edit(e: DictEntry) {
+        root.word = e.text;
+        root.heard = e.same ? "" : e.spoken;
+        root.editing = e.index;
+    }
+    function remove(i: int) {
+        root.reset();
+        AppState.remove-word(i);
+    }
+
+    PageHeader {
+        title: "Dictionary";
+        lede: "Words Hamsa should spell right, and phrases it should write differently from how you say them.";
+    }
+    // Add row
+    VerticalLayout {
+        spacing: 10px;
+        Rectangle {
+            border-radius: 16px;
+            background: Theme.card;
+            border-width: 1px;
+            border-color: Theme.line;
+            height: af.preferred-height;
+            af := HorizontalLayout {
+                padding-top: 18px;
+                padding-bottom: 18px;
+                padding-left: 20px;
+                padding-right: 20px;
+                spacing: 12px;
+                Field {
+                    horizontal-stretch: 1;
+                    preferred-width: 0px;
+                    label: "Add a word or phrase";
+                    placeholder: "e.g. Phonon, hamsa dot app";
+                    text <=> root.word;
+                    accepted => { root.submit(); }
+                }
+                Field {
+                    horizontal-stretch: 1;
+                    preferred-width: 0px;
+                    label: "Hamsa writes it as";
+                    note: "(optional)";
+                    placeholder: "Leave empty to keep the spelling";
+                    text <=> root.heard;
+                    accepted => { root.submit(); }
+                }
+                VerticalLayout {
+                    alignment: end;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        if root.editing >= 0: LineButton {
+                            height: 44px;
+                            text: "Cancel";
+                            clicked => { root.reset(); }
+                        }
+                        SolidButton {
+                            height: 44px;
+                            pad: 22px;
+                            icon: root.editing >= 0 ? Icons.check : Icons.plus;
+                            text: root.editing >= 0 ? "Save" : "Add";
+                            enabled: root.word != "";
+                            clicked => { root.submit(); }
+                        }
+                    }
+                }
+            }
+        }
+        if AppState.words-error != "": Text { text: AppState.words-error; color: Theme.danger; font-size: 13px; }
+    }
+
+    if AppState.dict-total == 0: EmptyState {
+        title: "No words yet";
+        body: "Add names, jargon and spellings above and Hamsa will get them right. If it keeps mishearing one, fill in how it writes it now.";
+    }
+    if AppState.dict-total > 0: VerticalLayout {
+        spacing: 26px;
+        // Toolbar: filter on the left, search on the right
+        HorizontalLayout {
+            spacing: 12px;
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 0;
+                CountSeg {
+                    options: ["All", "Words", "Replacements"];
+                    counts: [AppState.count-all, AppState.count-words, AppState.count-repl];
+                    selected <=> root.filter;
+                    picked(i) => { AppState.dict-view(root.query, i); }
+                }
+            }
+            Rectangle { horizontal-stretch: 1; min-width: 0px; }
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 0;
+                preferred-width: 280px;
+                min-width: 160px;
+                SearchBox {
+                    placeholder: "Search";
+                    text <=> root.query;
+                    edited(t) => { AppState.dict-view(t, root.filter); }
+                }
+            }
+        }
+        if AppState.chips.length == 0 && AppState.replacements.length == 0: EmptyState {
+            title: "No matches";
+            body: root.query != "" ? "Nothing in your dictionary matches “" + root.query + "”." : "Nothing here yet.";
+        }
+        if AppState.chips.length > 0: VerticalLayout {
+            spacing: 12px;
+            SectionLabel { text: "WORDS"; }
+            Rectangle {
+                height: AppState.chips-height;
+                for c in AppState.chips: WordChip {
+                    x: c.x;
+                    y: c.y;
+                    text: c.text;
+                    edit => { root.edit(c); }
+                    remove => { root.remove(c.index); }
+                }
+            }
+        }
+        if AppState.replacements.length > 0: VerticalLayout {
+            spacing: 12px;
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                SectionLabel { text: "REPLACEMENTS"; }
+                Text { text: "· you say, Hamsa writes"; font-size: 12px; color: Theme.muted; vertical-alignment: center; }
+            }
+            ListBox {
+                height: rl.preferred-height;
+                rl := VerticalLayout {
+                    for r[i] in AppState.replacements: ReplacementRow {
+                        e: r;
+                        first: i == 0;
+                        edit => { root.edit(r); }
+                        remove => { root.remove(r.index); }
+                    }
+                }
+            }
+        }
+    }
+    Text {
+        text: "Hamsa uses these while it transcribes. Changes apply to the next dictation.";
+        font-size: 13px;
+        line-height-factor: 1.2;
+        color: Theme.muted;
+        wrap: word-wrap;
+    }
+}
+
+// ---------- Snippets ----------
+
+// One entry in the list: cue in bold, first line of the text dimmed underneath.
+component SnippetItem inherits Rectangle {
+    in property <SnippetEntry> s;
+    in property <bool> selected;
+    callback clicked();
+    height: iv.preferred-height;
+    border-radius: 12px;
+    background: selected ? Theme.active : ta.has-hover ? Theme.row-hover : transparent;
+    iv := VerticalLayout {
+        padding-top: 12px;
+        padding-bottom: 12px;
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 3px;
+        Text { text: root.s.spoken; font-size: 15px; font-weight: 600; color: Theme.text; overflow: elide; }
+        Text { text: root.s.first-line; font-size: 13px; color: Theme.muted; overflow: elide; }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component SnippetsPage inherits VerticalLayout {
+    property <string> cue;
+    property <string> body;
+    property <int> sel: -1; // index of the snippet being edited, or -1 for a new one
+    property <bool> creating;
+    property <string> query;
+    spacing: 28px;
+    init => {
+        AppState.snippet-view("");
+        if AppState.snippets.length > 0 { root.select(0); }
+    }
+
+    function select(i: int) {
+        root.creating = false;
+        root.sel = i;
+        root.cue = AppState.snippets[i].spoken;
+        root.body = AppState.snippets[i].text;
+    }
+    function start-new() {
+        root.creating = true;
+        root.sel = -1;
+        root.cue = "";
+        root.body = "";
+    }
+
+    HorizontalLayout {
+        spacing: 16px;
+        PageHeader {
+            horizontal-stretch: 1;
+            title: "Snippets";
+            lede: "Say a short cue and Hamsa types the saved text for you, line breaks included.";
+        }
+        VerticalLayout {
+            alignment: end;
+            SolidButton {
+                height: 44px;
+                pad: 22px;
+                icon: Icons.plus;
+                text: "New snippet";
+                clicked => { root.start-new(); }
+            }
+        }
+    }
+
+    if AppState.snippets.length == 0 && !root.creating: EmptyState {
+        title: "No snippets yet";
+        body: "Add a cue and the text it stands for. Then say the cue anywhere in a dictation, for example “send it to my calendar link”.";
+    }
+    if AppState.snippets.length > 0 || root.creating: HorizontalLayout {
+        spacing: 24px;
+        // Left: search and the list
+        VerticalLayout {
+            horizontal-stretch: 0;
+            preferred-width: 340px;
+            min-width: 240px;
+            max-width: 340px;
+            alignment: start;
+            spacing: 12px;
+            SearchBox {
+                placeholder: "Search snippets";
+                text <=> root.query;
+                edited(t) => { AppState.snippet-view(t); }
+            }
+            ListBox {
+                height: sl.preferred-height;
+                sl := VerticalLayout {
+                    padding: 6px;
+                    spacing: 2px;
+                    for s in AppState.snippet-list: SnippetItem {
+                        s: s;
+                        selected: !root.creating && s.index == root.sel;
+                        clicked => { root.select(s.index); }
+                    }
+                    if AppState.snippet-list.length == 0: Text {
+                        text: root.query != "" ? "No snippets match “" + root.query + "”." : "No snippets yet.";
+                        font-size: 13px;
+                        color: Theme.muted;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+        // Right: the editor
+        VerticalLayout {
+            horizontal-stretch: 1;
+            min-width: 320px;
+            alignment: start;
+            Panel {
+                height: ed.preferred-height;
+                background: Theme.panel-bg;
+                border-radius: 16px;
+                ed := VerticalLayout {
+                    padding: 24px;
+                    spacing: 18px;
+                    Field { label: "When I say"; placeholder: "e.g. my calendar link"; text <=> root.cue; }
+                    Area { label: "Type this"; box-height: 190px; placeholder: "The text to insert. Line breaks are kept."; text <=> root.body; }
+                    VerticalLayout {
+                        spacing: 8px;
+                        SectionLabel { text: "PREVIEW · EXACTLY WHAT GETS TYPED"; }
+                        Rectangle {
+                            border-radius: 12px;
+                            background: Theme.bg;
+                            border-width: 1px;
+                            border-color: Theme.line;
+                            height: pv.preferred-height;
+                            pv := VerticalLayout {
+                                padding-top: 16px;
+                                padding-bottom: 16px;
+                                padding-left: 18px;
+                                padding-right: 18px;
+                                Text {
+                                    text: root.body == "" ? "Nothing to type yet." : root.body;
+                                    font-size: 14px;
+                                    line-height-factor: 1.28;
+                                    color: root.body == "" ? Theme.muted : Theme.text;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
+                    }
+                    if AppState.snippets-error != "": Text { text: AppState.snippets-error; color: Theme.danger; font-size: 13px; wrap: word-wrap; }
+                    HorizontalLayout {
+                        spacing: 12px;
+                        if root.sel >= 0: LineButton {
+                            height: 44px;
+                            icon: Icons.trash;
+                            text: "Delete";
+                            clicked => {
+                                AppState.remove-snippet(root.sel);
+                                root.sel = -1;
+                                root.creating = false;
+                                root.cue = "";
+                                root.body = "";
+                            }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        SolidButton {
+                            height: 44px;
+                            pad: 22px;
+                            text: "Save snippet";
+                            enabled: root.cue != "" && root.body != "";
+                            clicked => {
+                                if AppState.save-snippet(root.cue, root.body, root.sel) {
+                                    // A new snippet goes to the top of the list.
+                                    root.select(root.sel < 0 ? 0 : root.sel);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------- Notes ----------
+
+// One note in the list: title, then "date · N words".
+component NoteItem inherits Rectangle {
+    in property <NoteEntry> n;
+    in property <bool> selected;
+    callback clicked();
+    height: iv.preferred-height;
+    border-radius: 12px;
+    background: selected ? Theme.active : ta.has-hover ? Theme.row-hover : transparent;
+    accessible-role: button;
+    accessible-label: root.n.title + ", " + root.n.meta;
+    accessible-action-default => { root.clicked(); }
+    iv := VerticalLayout {
+        padding-top: 12px;
+        padding-bottom: 12px;
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 3px;
+        Text { text: root.n.title; font-size: 15px; font-weight: 600; color: Theme.text; overflow: elide; }
+        Text { text: root.n.meta; font-size: 12px; color: root.selected && Theme.dark ? Theme.nav : Theme.muted; overflow: elide; }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// The note's title: one big line.
+component NoteTitle inherits Rectangle {
+    in-out property <string> text;
+    in property <int> focus-tick; // changes when the title should take the keyboard
+    callback edited();
+    callback accepted();
+    height: 32px;
+    init => {
+        if root.focus-tick > 0 { ti.focus(); }
+    }
+    changed focus-tick => { ti.focus(); }
+    Text {
+        text: "Untitled note";
+        visible: root.text == "";
+        color: #8a8578;
+        font-size: 24px;
+        font-weight: 500;
+        vertical-alignment: center;
+        height: parent.height;
+    }
+    ti := TextInput {
+        width: parent.width;
+        height: parent.height;
+        text <=> root.text;
+        color: Theme.text;
+        font-size: 24px;
+        font-weight: 500;
+        single-line: true;
+        vertical-alignment: center;
+        accessible-label: "Note title";
+        selection-background-color: Theme.accent.with-alpha(0.25);
+        edited => { root.edited(); }
+        accepted => { root.accepted(); }
+    }
+}
+
+component NotesPage inherits VerticalLayout {
+    property <string> query;
+    property <int> focus-tick;
+    property <bool> confirming;
+    property <string> shortcut-text: AppState.shortcut.length > 1 ? AppState.shortcut[0] + "+" + AppState.shortcut[1] : AppState.shortcut.length > 0 ? AppState.shortcut[0] : "";
+    spacing: 28px;
+    init => { AppState.notes-opened(); }
+
+    HorizontalLayout {
+        spacing: 16px;
+        PageHeader {
+            horizontal-stretch: 1;
+            title: "Notes";
+            lede: "Dictate longer notes straight into Hamsa, then keep editing by hand.";
+        }
+        VerticalLayout {
+            alignment: end;
+            SolidButton {
+                height: 44px;
+                pad: 22px;
+                icon: Icons.plus;
+                text: "New note";
+                clicked => {
+                    root.confirming = false;
+                    root.query = "";
+                    AppState.new-note();
+                    root.focus-tick += 1;
+                }
+            }
+        }
+    }
+
+    if AppState.notes-total == 0: EmptyState {
+        title: "No notes yet";
+        body: "Press New note, then hold " + root.shortcut-text + " and talk.";
+    }
+    if AppState.notes-total > 0: HorizontalLayout {
+        spacing: 24px;
+        // Left: search and the list
+        VerticalLayout {
+            horizontal-stretch: 0;
+            preferred-width: 320px;
+            min-width: 220px;
+            max-width: 320px;
+            alignment: start;
+            spacing: 12px;
+            SearchBox {
+                placeholder: "Search notes";
+                text <=> root.query;
+                edited(t) => { AppState.notes-view(t); }
+            }
+            ListBox {
+                height: min(nl.preferred-height, 464px);
+                Flickable {
+                    content-height: nl.preferred-height;
+                    nl := VerticalLayout {
+                        width: parent.width;
+                        padding: 6px;
+                        spacing: 2px;
+                        for n in AppState.notes: NoteItem {
+                            n: n;
+                            selected: n.id == AppState.note-id;
+                            clicked => {
+                                root.confirming = false;
+                                AppState.open-note(n.id);
+                            }
+                        }
+                        if AppState.notes.length == 0: Text {
+                            text: "No notes match “" + root.query + "”.";
+                            font-size: 13px;
+                            color: Theme.muted;
+                            horizontal-alignment: center;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+            }
+        }
+        // Right: the open note
+        VerticalLayout {
+            horizontal-stretch: 1;
+            min-width: 320px;
+            alignment: start;
+            Panel {
+                height: 560px;
+                border-radius: 16px;
+                accessible-role: groupbox;
+                accessible-label: "Open note";
+                VerticalLayout {
+                    if AppState.note-id == "": Text {
+                        text: "Pick a note on the left, or press New note.";
+                        font-size: 14px;
+                        color: Theme.muted;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        vertical-stretch: 1;
+                    }
+                    if AppState.note-id != "": VerticalLayout {
+                        vertical-stretch: 1;
+                        // Title and when it was last edited
+                        VerticalLayout {
+                            padding-top: 24px;
+                            padding-left: 28px;
+                            padding-right: 28px;
+                            spacing: 6px;
+                            NoteTitle {
+                                text <=> AppState.note-title;
+                                focus-tick: root.focus-tick;
+                                edited => { AppState.edit-note(AppState.note-title, AppState.note-body); }
+                                accepted => { body-input.focus(); }
+                            }
+                            Text { text: AppState.note-meta; font-size: 13px; color: Theme.muted; overflow: elide; }
+                        }
+                        // The text
+                        flick := Flickable {
+                            vertical-stretch: 1;
+                            content-height: body-box.height;
+                            body-box := Rectangle {
+                                x: 28px;
+                                width: flick.width - 56px;
+                                height: max(flick.height, body-input.preferred-height + 32px);
+                                Text {
+                                    y: 16px;
+                                    text: "Type here, or hold " + root.shortcut-text + " and speak.";
+                                    visible: AppState.note-body == "";
+                                    color: #8a8578;
+                                    font-size: 15px;
+                                }
+                                body-input := TextInput {
+                                    y: 16px;
+                                    width: parent.width;
+                                    height: parent.height - 16px;
+                                    text <=> AppState.note-body;
+                                    color: Theme.text;
+                                    font-size: 15px;
+                                    single-line: false;
+                                    wrap: word-wrap;
+                                    accessible-label: "Note text";
+                                    selection-background-color: Theme.accent.with-alpha(0.25);
+                                    edited => { AppState.edit-note(AppState.note-title, AppState.note-body); }
+                                    cursor-position-changed(pos) => {
+                                        if pos.y + 16px + flick.content-y < 0 {
+                                            flick.content-y = -(pos.y + 16px);
+                                        } else if pos.y + 16px + 26px + flick.content-y > flick.height {
+                                            flick.content-y = flick.height - (pos.y + 16px) - 26px;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // Bottom strip
+                        Rectangle {
+                            height: 64px;
+                            background: Theme.chip;
+                            Rectangle { y: 0; height: 1px; background: Theme.line; }
+                            HorizontalLayout {
+                                padding-left: 28px;
+                                padding-right: 20px;
+                                spacing: 10px;
+                                if !root.confirming: HorizontalLayout {
+                                    spacing: 10px;
+                                    horizontal-stretch: 1;
+                                    Icon { path: Icons.mic; color: Theme.muted; y: (parent.height - self.height) / 2; }
+                                    Text { text: "Hold"; font-size: 14px; color: Theme.text; vertical-alignment: center; }
+                                    VerticalLayout {
+                                        alignment: center;
+                                        width: kc.preferred-width;
+                                        kc := Keycaps {
+                                            labels: AppState.shortcut;
+                                            size: 0;
+                                            face: Theme.key-face;
+                                            edge: Theme.key-edge;
+                                            shadow-color: Theme.dark ? #4d4a42 : #000000;
+                                        }
+                                    }
+                                    Text { text: "to add to this note"; font-size: 14px; color: Theme.text; vertical-alignment: center; overflow: elide; }
+                                }
+                                if !root.confirming: HorizontalLayout {
+                                    alignment: end;
+                                    spacing: 2px;
+                                    VerticalLayout {
+                                        alignment: center;
+                                        IconButton { icon: Icons.copy; icon-size: 18px; label: "Copy note"; clicked => { AppState.copy-note(); } }
+                                    }
+                                    VerticalLayout {
+                                        alignment: center;
+                                        IconButton { icon: Icons.trash; icon-size: 18px; label: "Delete note"; clicked => { root.confirming = true; } }
+                                    }
+                                }
+                                if root.confirming: Text {
+                                    text: "Delete this note?";
+                                    font-size: 14px;
+                                    font-weight: 600;
+                                    color: Theme.text;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                }
+                                if root.confirming: VerticalLayout {
+                                    alignment: center;
+                                    LineButton {
+                                        height: 36px;
+                                        icon: Icons.trash;
+                                        text: "Delete";
+                                        tint: Theme.danger;
+                                        edge: Theme.danger;
+                                        clicked => {
+                                            root.confirming = false;
+                                            AppState.delete-note();
+                                        }
+                                    }
+                                }
+                                if root.confirming: VerticalLayout {
+                                    alignment: center;
+                                    LineButton { height: 36px; text: "Cancel"; clicked => { root.confirming = false; } }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------- Settings ----------
+
+// .model card; the active one gets a 2 px ring (box-shadow 0 0 0 2px accent).
+component ModelCardView inherits Rectangle {
+    in property <ModelCard> m;
+    border-radius: 18px;
+    background: Theme.card;
+    border-width: 1px;
+    border-color: Theme.line;
+    min-height: mv.preferred-height;
+    if root.m.active: Rectangle {
+        x: -2px;
+        y: -2px;
+        width: parent.width + 4px;
+        height: parent.height + 4px;
+        border-radius: 20px;
+        border-width: 2px;
+        border-color: Theme.accent;
+    }
+    mv := VerticalLayout {
+        padding: 24px;
+        spacing: 16px;
+        HorizontalLayout {
+            spacing: 12px;
+            VerticalLayout {
+                spacing: 6px;
+                horizontal-stretch: 1;
+                Text { text: root.m.name; font-size: 18px; font-weight: 600; color: Theme.text; }
+                HorizontalLayout { alignment: start; Tag { text: root.m.tag; kind: root.m.tag-kind; } }
+            }
+            if root.m.active: VerticalLayout {
+                alignment: start;
+                horizontal-stretch: 0;
+                HorizontalLayout {
+                    spacing: 6px;
+                    Icon { path: Icons.check; size: 16px; stroke-px: 2.2px; color: Theme.teal; y: (parent.height - self.height) / 2; }
+                    Text { text: "In use"; font-size: 13px; font-weight: 600; color: Theme.teal; vertical-alignment: center; }
+                }
+            }
+        }
+        Text { text: root.m.blurb; font-size: 14px; line-height-factor: 1.24; color: Theme.nav; wrap: word-wrap; }
+        GridLayout {
+            spacing-horizontal: 16px;
+            spacing-vertical: 6px;
+            Row {
+                Text { text: "Languages"; font-size: 13px; color: Theme.muted; horizontal-stretch: 0; }
+                Text { text: root.m.languages; font-size: 13px; color: Theme.text; horizontal-stretch: 1; }
+            }
+            Row {
+                Text { text: "Download"; font-size: 13px; color: Theme.muted; horizontal-stretch: 0; }
+                Text { text: root.m.size; font-size: 13px; color: Theme.text; horizontal-stretch: 1; }
+            }
+            Row {
+                Text { text: "Status"; font-size: 13px; color: Theme.muted; horizontal-stretch: 0; }
+                Text { text: root.m.status; font-size: 13px; color: root.m.status-ok ? Theme.teal : Theme.muted; font-weight: root.m.status-ok ? 600 : 400; horizontal-stretch: 1; }
+            }
+            if root.m.device != "": Row {
+                Text { text: "Runs on"; font-size: 13px; color: Theme.muted; horizontal-stretch: 0; }
+                Text { text: root.m.device; font-size: 13px; color: Theme.text; wrap: word-wrap; horizontal-stretch: 1; }
+            }
+        }
+        if root.m.downloading: Rectangle {
+            height: 8px;
+            border-radius: 4px;
+            background: Theme.line;
+            clip: true;
+            Rectangle {
+                x: 0;
+                width: parent.width * root.m.progress;
+                background: Theme.accent;
+            }
+        }
+        if root.m.error != "": Text { text: root.m.error; color: Theme.danger; font-size: 13px; wrap: word-wrap; }
+        Rectangle { vertical-stretch: 1; }
+        if !root.m.installed && !root.m.downloading: HorizontalLayout {
+            alignment: start;
+            LineButton { text: "Download"; icon: Icons.download; clicked => { AppState.download-model(root.m.id); } }
+        }
+        if root.m.installed && !root.m.active && !root.m.loading: HorizontalLayout {
+            alignment: start;
+            SolidButton { text: "Use this model"; clicked => { AppState.use-model(root.m.id); } }
+        }
+        if root.m.installed && root.m.removable && !root.m.loading: HorizontalLayout {
+            alignment: start;
+            LineButton { text: "Remove download"; clicked => { AppState.remove-model(root.m.id); } }
+        }
+    }
+}
+
+component SettingsPage inherits VerticalLayout {
+    spacing: 28px;
+    VerticalLayout {
+        spacing: 18px;
+        PageTitle { text: "Settings"; }
+        Tabs {
+            options: ["General", "Dictation", "Models", "Privacy"];
+            selected <=> AppState.settings-tab;
+        }
+    }
+    if AppState.settings-tab == 0: VerticalLayout {
+        spacing: 28px;
+        Panel {
+            height: gl.preferred-height;
+            gl := VerticalLayout {
+                HorizontalLayout {
+                    padding-top: 20px;
+                    padding-bottom: 8px;
+                    padding-left: 24px;
+                    padding-right: 24px;
+                    PanelTitle { text: "General"; }
+                }
+                SettingRow {
+                    title: "Appearance";
+                    detail: "Dark uses pure black, easy on OLED screens.";
+                    VerticalLayout {
+                        alignment: center;
+                        Seg {
+                            options: ["System", "Light", "Dark"];
+                            selected <=> AppState.theme-choice;
+                            picked(i) => { AppState.set-theme(i); }
+                        }
+                    }
+                }
+                Divider { }
+                SettingRow {
+                    title: "Microphone";
+                    detail: "Which input Hamsa records from.";
+                    VerticalLayout {
+                        alignment: center;
+                        Select {
+                            options: AppState.microphones;
+                            selected <=> AppState.microphone;
+                            picked(i) => { AppState.set-microphone(i); }
+                        }
+                    }
+                }
+                Divider { }
+                SettingRow {
+                    title: "Start Hamsa when Windows starts";
+                    detail: "Runs quietly in the tray, ready for Ctrl+Win";
+                    VerticalLayout {
+                        alignment: center;
+                        Switch {
+                            on <=> AppState.start-with-windows;
+                            toggled(v) => { AppState.set-start-with-windows(v); }
+                        }
+                    }
+                }
+                Divider { }
+                SettingRow {
+                    title: "Hands-free: double-tap to keep listening";
+                    detail: "Double-tap the shortcut and let go: Hamsa keeps listening. Tap it once to finish, or press Esc to cancel.";
+                    VerticalLayout {
+                        alignment: center;
+                        Switch {
+                            on <=> AppState.hands-free;
+                            toggled(v) => { AppState.set-hands-free(v); }
+                        }
+                    }
+                }
+                Divider { }
+                SettingRow {
+                    title: "Setup";
+                    detail: "Walk through the model, microphone and practice steps again.";
+                    VerticalLayout {
+                        alignment: center;
+                        LineButton { text: "Run setup again"; clicked => { AppState.run-setup(); } }
+                    }
+                }
+            }
+        }
+    }
+    if AppState.settings-tab == 1: VerticalLayout {
+        spacing: 28px;
+        Panel {
+            height: pl.preferred-height;
+            pl := VerticalLayout {
+                HorizontalLayout {
+                    padding-top: 20px;
+                    padding-bottom: 8px;
+                    padding-left: 24px;
+                    padding-right: 24px;
+                    PanelTitle { text: "Shortcut"; }
+                }
+                SettingRow {
+                    title: "Dictation shortcut";
+                    detail: AppState.capture-mode == 1 ? "Press and release the keys you want to use. Esc cancels."
+                        : AppState.capture-mode == 2 ? (AppState.capture-error != "" ? AppState.capture-error : "Save to use this shortcut.")
+                        : "Hold to talk, release to paste.";
+                    detail-color: AppState.capture-mode == 2 && AppState.capture-error != "" ? Theme.danger : Theme.muted;
+                    HorizontalLayout {
+                        spacing: 10px;
+                        alignment: end;
+                        if AppState.capture-mode == 1: VerticalLayout { alignment: center; Chip { text: "Listening for keys…"; } }
+                        if AppState.capture-mode != 1: VerticalLayout {
+                            alignment: center;
+                            Keycaps {
+                                labels: AppState.capture-mode == 2 ? AppState.captured : AppState.shortcut;
+                                size: 1;
+                                plus-color: Theme.muted;
+                                face: Theme.key-face;
+                                edge: Theme.key-edge;
+                                shadow-color: Theme.key-shadow;
+                            }
+                        }
+                        if AppState.capture-mode == 0: VerticalLayout { alignment: center; padding-left: 6px; LineButton { text: "Change"; clicked => { AppState.begin-capture(); } } }
+                        if AppState.capture-mode == 1: VerticalLayout { alignment: center; LineButton { text: "Cancel"; clicked => { AppState.cancel-capture(); } } }
+                        if AppState.capture-mode == 2 && AppState.capture-error == "": VerticalLayout { alignment: center; SolidButton { text: "Save"; clicked => { AppState.save-capture(); } } }
+                        if AppState.capture-mode == 2: VerticalLayout { alignment: center; LineButton { text: "Try again"; clicked => { AppState.begin-capture(); } } }
+                        if AppState.capture-mode == 2: VerticalLayout { alignment: center; LineButton { text: "Cancel"; clicked => { AppState.cancel-capture(); } } }
+                    }
+                }
+            }
+        }
+        Panel {
+            height: bl.preferred-height;
+            bl := VerticalLayout {
+                HorizontalLayout {
+                    padding-top: 20px;
+                    padding-bottom: 8px;
+                    padding-left: 24px;
+                    padding-right: 24px;
+                    PanelTitle { text: "Dictation bar"; }
+                }
+                SettingRow {
+                    title: "Show the bar when idle";
+                    detail: "Off: it appears only while you dictate.";
+                    VerticalLayout {
+                        alignment: center;
+                        Switch {
+                            on <=> AppState.bar-visible;
+                            toggled(v) => { AppState.set-bar(v, AppState.bar-preview, AppState.bar-position); }
+                        }
+                    }
+                }
+                Divider { }
+                SettingRow {
+                    title: "Live preview";
+                    detail: "Show your words above the bar while you talk.";
+                    VerticalLayout {
+                        alignment: center;
+                        Switch {
+                            on <=> AppState.bar-preview;
+                            toggled(v) => { AppState.set-bar(AppState.bar-visible, v, AppState.bar-position); }
+                        }
+                    }
+                }
+                Divider { }
+                SettingRow {
+                    title: "Position";
+                    detail: "Or drag the bar wherever you like.";
+                    VerticalLayout {
+                        alignment: center;
+                        Seg {
+                            options: ["Bottom", "Top", "Where I drag it"];
+                            selected <=> AppState.bar-position;
+                            picked(i) => { AppState.set-bar(AppState.bar-visible, AppState.bar-preview, i); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if AppState.settings-tab == 2: VerticalLayout {
+        spacing: 28px;
+        // Transcription model: heading, lede, the two model cards
+        VerticalLayout {
+            spacing: 16px;
+            VerticalLayout {
+                spacing: 6px;
+                Text { text: "Transcription model"; font-size: Theme.h2-size; font-weight: 500; letter-spacing: Theme.h2-spacing; color: Theme.text; }
+                Lede { text: "Models run entirely on this computer. Your voice is never uploaded."; }
+            }
+            HorizontalLayout {
+                spacing: 16px;
+                // Equal columns, like the CSS grid (repeat(auto-fit, minmax(300px, 1fr))).
+                for m in AppState.models: ModelCardView { m: m; horizontal-stretch: 1; preferred-width: 0px; min-width: 0px; }
+            }
+            // Moroccan Darija models: they run on the llama.cpp helper and replace Phonon while one is in use.
+            HorizontalLayout {
+                spacing: 16px;
+                for m in AppState.darija-models: ModelCardView { m: m; horizontal-stretch: 1; preferred-width: 0px; min-width: 0px; }
+            }
+        }
+        Panel {
+            height: sp.preferred-height;
+            sp := VerticalLayout {
+                HorizontalLayout {
+                    padding-top: 20px;
+                    padding-bottom: 8px;
+                    padding-left: 24px;
+                    padding-right: 24px;
+                    PanelTitle { text: "Speech"; }
+                }
+                SettingRow {
+                    title: "Compute device";
+                    detail: "Auto uses your GPU when one is available." + (AppState.device-line != "" ? " Now running on " + AppState.device-line + "." : "")
+                        + (AppState.device-note != "" ? " " + AppState.device-note : "");
+                    VerticalLayout {
+                        alignment: center;
+                        Seg {
+                            options: ["Auto", "CPU", "GPU"];
+                            selected <=> AppState.compute;
+                            picked(i) => { AppState.set-compute(i); }
+                        }
+                    }
+                }
+                Divider { }
+                SettingRow {
+                    title: "Spoken language";
+                    detail: AppState.darija-active ? "Not used: the Darija model understands Moroccan Darija." : AppState.multilingual-active ? "Pick one, or let the model detect it." : "Phonon-2.5 English only understands English.";
+                    VerticalLayout {
+                        alignment: center;
+                        Select {
+                            options: AppState.languages;
+                            selected <=> AppState.language;
+                            enabled: AppState.multilingual-active && !AppState.darija-active;
+                            picked(i) => { AppState.set-language(i); }
+                        }
+                    }
+                }
+            }
+        }
+        // Smart cleanup
+        Panel {
+            height: sc.preferred-height;
+            sc := VerticalLayout {
+                HorizontalLayout {
+                    padding-top: 20px;
+                    padding-bottom: 8px;
+                    padding-left: 24px;
+                    padding-right: 24px;
+                    PanelTitle { text: "Smart cleanup"; }
+                }
+                SettingRow {
+                    title: "Smart cleanup";
+                    detail: "Removes um/uh and fixes self-corrections, e.g. \"Tuesday, no, Wednesday\" → \"Wednesday\". English only. Runs on this PC.";
+                    VerticalLayout {
+                        alignment: center;
+                        Switch {
+                            on <=> AppState.cleanup-on;
+                            toggled(v) => { AppState.set-cleanup(v); }
+                        }
+                    }
+                }
+                Divider { }
+                SettingRow {
+                    title: "Model size";
+                    detail: "Standard is the reference quality. Small downloads less and is a little less exact.";
+                    VerticalLayout {
+                        alignment: center;
+                        Seg {
+                            options: ["Standard · 834 MB", "Small · 542 MB"];
+                            selected <=> AppState.cleanup-size;
+                            picked(i) => { AppState.set-cleanup-size(i); }
+                        }
+                    }
+                }
+                Divider { }
+                SettingRow {
+                    title: "Status";
+                    detail: AppState.cleanup-status;
+                    detail-color: AppState.cleanup-state == 3 ? Theme.danger : AppState.cleanup-state == 2 ? Theme.teal : Theme.muted;
+                    HorizontalLayout {
+                        spacing: 10px;
+                        alignment: end;
+                        if AppState.cleanup-state == 0 || AppState.cleanup-state == 3: VerticalLayout {
+                            alignment: center;
+                            LineButton { text: AppState.cleanup-state == 3 ? "Try again" : "Download"; icon: Icons.download; clicked => { AppState.download-cleanup(); } }
+                        }
+                        if AppState.cleanup-state == 2 || AppState.cleanup-state == 3: VerticalLayout {
+                            alignment: center;
+                            LineButton { text: "Remove download"; clicked => { AppState.remove-cleanup(); } }
+                        }
+                    }
+                }
+                if AppState.cleanup-state == 1: HorizontalLayout {
+                    padding-left: 24px;
+                    padding-right: 24px;
+                    padding-bottom: 20px;
+                    Rectangle {
+                        height: 8px;
+                        border-radius: 4px;
+                        background: Theme.line;
+                        clip: true;
+                        Rectangle {
+                            x: 0;
+                            width: parent.width * AppState.cleanup-progress;
+                            background: Theme.accent;
+                        }
+                    }
+                }
+            }
+        }
+        VerticalLayout {
+            spacing: 12px;
+            // Models are stored in <code>
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                Text { text: "Models are stored in"; font-size: 13px; color: Theme.muted; vertical-alignment: center; }
+                Rectangle {
+                    height: ct.preferred-height + 6px;
+                    width: ct.preferred-width + 14px;
+                    border-radius: 6px;
+                    background: Theme.chip;
+                    border-width: 1px;
+                    border-color: Theme.line;
+                    ct := Text { text: AppState.models-dir; font-size: 12px; color: Theme.text; }
+                    TouchArea { mouse-cursor: pointer; clicked => { AppState.open-folder(); } }
+                }
+            }
+            Text {
+                text: "Phonon-2.5 and Phonon-2.5 English by Fermion Research, based on NVIDIA Parakeet TDT 0.6B v3. Licensed under CC BY 4.0.";
+                font-size: 13px;
+                color: Theme.muted;
+                wrap: word-wrap;
+            }
+        }
+    }
+    if AppState.settings-tab == 3: VerticalLayout {
+        spacing: 28px;
+        Panel {
+            height: pv.preferred-height;
+            pv := VerticalLayout {
+                HorizontalLayout {
+                    padding-top: 20px;
+                    padding-bottom: 8px;
+                    padding-left: 24px;
+                    padding-right: 24px;
+                    PanelTitle { text: "Privacy"; }
+                }
+                SettingRow {
+                    title: "Your voice stays on this PC";
+                    detail: "Speech models run entirely on this computer. Audio is never uploaded.";
+                }
+                Divider { }
+                SettingRow {
+                    title: "When Hamsa uses the internet";
+                    detail: "Only to download speech models and smart cleanup. Nothing you say or write is sent.";
+                }
+                Divider { }
+                SettingRow {
+                    title: "Your words stay here too";
+                    detail: "Your dictionary, snippets and transcripts are stored on this PC.";
+                }
+            }
+        }
+    }
+}
+
+// ---------- Style ----------
+
+// A tone card: the selected one is the filled accent card.
+component ToneCard inherits Rectangle {
+    in property <string> name;
+    in property <string> sample;
+    in property <string> hint;
+    in property <bool> chosen;
+    border-radius: 16px;
+    border-width: 1px;
+    border-color: chosen ? Theme.accent : Theme.line;
+    background: chosen ? Theme.accent : Theme.card;
+    VerticalLayout {
+        padding-top: 18px;
+        padding-bottom: 20px;
+        padding-left: 20px;
+        padding-right: 20px;
+        spacing: 12px;
+        HorizontalLayout {
+            Text { text: root.name; font-size: 17px; font-weight: 600; color: root.chosen ? Theme.on-accent : Theme.text; horizontal-stretch: 1; }
+            if root.chosen: Icon { path: Icons.check; size: 18px; stroke-px: 2.2px; color: Theme.on-accent; }
+        }
+        Text { text: root.sample; font-size: 15px; line-height-factor: 1.24; wrap: word-wrap; color: root.chosen ? Theme.on-accent : Theme.text; }
+        Text { text: root.hint; font-size: 12px; color: root.chosen ? (Theme.dark ? #4d4a42 : #c5c0b3) : Theme.muted; }
+    }
+}
+
+// One row of a rounded list: label on the left, a control on the right.
+component FormatRow inherits Rectangle {
+    in property <string> label;
+    in property <string> aside;
+    in property <string> sub;
+    in property <bool> last;
+    height: root.sub != "" ? 72px : 52px;
+    background: Theme.card;
+    HorizontalLayout {
+        padding-left: 20px;
+        padding-right: 16px;
+        spacing: 16px;
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            spacing: 2px;
+            HorizontalLayout {
+                alignment: start;
+                spacing: 6px;
+                Text { text: root.label; font-size: 15px; color: Theme.text; vertical-alignment: center; }
+                if root.aside != "": Text { text: root.aside; font-size: 15px; color: Theme.muted; vertical-alignment: center; }
+            }
+            if root.sub != "": Text { text: root.sub; font-size: 12px; color: Theme.muted; wrap: word-wrap; }
+        }
+        VerticalLayout {
+            alignment: center;
+            @children
+        }
+    }
+    if !root.last: Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
+}
+
+// A select that cannot be opened yet.
+component DisabledSelect inherits Rectangle {
+    in property <string> text;
+    width: 140px;
+    height: 40px;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: Theme.input-line;
+    background: Theme.card;
+    Text { x: 12px; text: root.text; font-size: 14px; color: Theme.text; vertical-alignment: center; }
+    Icon { x: parent.width - 26px; path: "M6 9l6 6 6-6"; size: 16px; stroke-px: 2px; color: Theme.text; }
+}
+
+component StylePage inherits VerticalLayout {
+    spacing: 28px;
+    alignment: start;
+    PageHeader { title: "Style"; lede: "Choose how formal or casual your dictated text should read."; }
+
+    // Default tone: SpeakoFlow's cleanup doesn't do tones, so it is shown but not usable yet.
+    VerticalLayout {
+        spacing: 12px;
+        HorizontalLayout {
+            alignment: start;
+            spacing: 10px;
+            SectionLabel { text: "DEFAULT TONE"; vertical-alignment: center; }
+            Tag { text: "Coming later"; }
+        }
+        HorizontalLayout {
+            spacing: 14px;
+            opacity: 0.65;
+            ToneCard { name: "Formal"; sample: "Hi Sam, I wanted to follow up on yesterday's meeting."; hint: "Full sentences, no contractions"; horizontal-stretch: 1; preferred-width: 0px; }
+            ToneCard { name: "Neutral"; sample: "Hi Sam, following up on yesterday's meeting."; hint: "Your words, lightly tidied"; chosen: true; horizontal-stretch: 1; preferred-width: 0px; }
+            ToneCard { name: "Casual"; sample: "hey sam, following up on yesterday's meeting"; hint: "Lowercase, relaxed punctuation"; horizontal-stretch: 1; preferred-width: 0px; }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 28px;
+        alignment: stretch;
+        VerticalLayout {
+            spacing: 12px;
+            alignment: start;
+            horizontal-stretch: 1;
+            preferred-width: 0px;
+            SectionLabel { text: "FORMATTING"; height: 21px; vertical-alignment: center; }
+            ListBox {
+                height: fl.preferred-height + 2px;
+                fl := VerticalLayout {
+                    FormatRow {
+                        label: "Capitalize sentences";
+                        Switch {
+                            on <=> AppState.fmt-capitalize;
+                            toggled(v) => { AppState.set-formatting(v, AppState.fmt-end, AppState.fmt-fillers, AppState.fmt-smart, AppState.fmt-lists, AppState.fmt-bullet); }
+                        }
+                    }
+                    FormatRow {
+                        label: "End with punctuation";
+                        Switch {
+                            on <=> AppState.fmt-end;
+                            toggled(v) => { AppState.set-formatting(AppState.fmt-capitalize, v, AppState.fmt-fillers, AppState.fmt-smart, AppState.fmt-lists, AppState.fmt-bullet); }
+                        }
+                    }
+                    FormatRow {
+                        label: "Remove filler words";
+                        aside: "(um, uh)";
+                        Switch {
+                            on <=> AppState.fmt-fillers;
+                            toggled(v) => { AppState.set-formatting(AppState.fmt-capitalize, AppState.fmt-end, v, AppState.fmt-smart, AppState.fmt-lists, AppState.fmt-bullet); }
+                        }
+                    }
+                    FormatRow {
+                        label: "Format lists";
+                        sub: "Say 'first… second…' or 'shopping list: eggs, milk, bread' to get a list";
+                        HorizontalLayout {
+                            spacing: 14px;
+                            alignment: end;
+                            VerticalLayout {
+                                alignment: center;
+                                Seg {
+                                    options: ["• Dot", "- Dash"];
+                                    selected <=> AppState.fmt-bullet;
+                                    pad: 10px;
+                                    height: 36px;
+                                    border-radius: 18px;
+                                    opacity: AppState.fmt-lists ? 1 : 0.45;
+                                    picked(i) => { AppState.set-formatting(AppState.fmt-capitalize, AppState.fmt-end, AppState.fmt-fillers, AppState.fmt-smart, AppState.fmt-lists, i); }
+                                }
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                Switch {
+                                    on <=> AppState.fmt-lists;
+                                    toggled(v) => { AppState.set-formatting(AppState.fmt-capitalize, AppState.fmt-end, AppState.fmt-fillers, AppState.fmt-smart, v, AppState.fmt-bullet); }
+                                }
+                            }
+                        }
+                    }
+                    FormatRow {
+                        label: "Smart quotes and dashes";
+                        last: true;
+                        Switch {
+                            on <=> AppState.fmt-smart;
+                            toggled(v) => { AppState.set-formatting(AppState.fmt-capitalize, AppState.fmt-end, AppState.fmt-fillers, v, AppState.fmt-lists, AppState.fmt-bullet); }
+                        }
+                    }
+                }
+            }
+        }
+        VerticalLayout {
+            spacing: 12px;
+            alignment: start;
+            horizontal-stretch: 1;
+            preferred-width: 0px;
+            HorizontalLayout {
+                alignment: start;
+                spacing: 10px;
+                SectionLabel { text: "PER APP"; vertical-alignment: center; }
+                Tag { text: "Coming later"; }
+            }
+            VerticalLayout {
+                spacing: 12px;
+                opacity: 0.65;
+                ListBox {
+                    height: al.preferred-height + 2px;
+                    al := VerticalLayout {
+                        FormatRow { label: "Email"; DisabledSelect { text: "Formal"; } }
+                        FormatRow { label: "Chat"; DisabledSelect { text: "Casual"; } }
+                        FormatRow { label: "Documents"; DisabledSelect { text: "Use default"; } }
+                        FormatRow { label: "Code editors"; last: true; DisabledSelect { text: "Use default"; } }
+                    }
+                }
+                Text { text: "Hamsa picks the tone from the app you are typing into."; font-size: 13px; line-height-factor: 1.2; wrap: word-wrap; color: Theme.muted; }
+            }
+        }
+    }
+}
+
+// ---------- Help ----------
+
+component HelpPage inherits VerticalLayout {
+    spacing: 32px;
+    alignment: start;
+    PageHeader {
+        title: "Help";
+        lede: "Hamsa Beta is the native version of Hamsa. It shares your settings, dictionary, snippets and speech models with the regular Hamsa, so run only one of them at a time.";
+    }
+    Panel {
+        height: dp.preferred-height;
+        dp := VerticalLayout {
+            HorizontalLayout {
+                padding-top: 20px;
+                padding-bottom: 8px;
+                padding-left: 24px;
+                padding-right: 24px;
+                PanelTitle { text: "Dictating"; }
+            }
+            VerticalLayout {
+                padding-left: 24px;
+                padding-right: 24px;
+                padding-bottom: 24px;
+                spacing: 10px;
+                Text { text: "Hold the shortcut, speak, and let go to paste. Or double-tap it to keep listening hands-free: tap it once to finish, or press Esc to cancel."; font-size: 14px; color: Theme.muted; wrap: word-wrap; }
+            }
+        }
+    }
+    Panel {
+        height: hp.preferred-height;
+        hp := VerticalLayout {
+            HorizontalLayout {
+                padding-top: 20px;
+                padding-bottom: 8px;
+                padding-left: 24px;
+                padding-right: 24px;
+                PanelTitle { text: "Credits"; }
+            }
+            VerticalLayout {
+                padding-left: 24px;
+                padding-right: 24px;
+                padding-bottom: 24px;
+                spacing: 10px;
+                Text { text: "Speech recognition: Phonon-2.5 and Phonon-2.5 English by Fermion Research (CC BY 4.0), based on NVIDIA Parakeet TDT 0.6B v3."; font-size: 14px; color: Theme.muted; wrap: word-wrap; }
+                Text { text: "Typeface: Readex Pro (SIL Open Font License 1.1)."; font-size: 14px; color: Theme.muted; wrap: word-wrap; }
+                Text { text: "Interface built with Slint:"; font-size: 14px; color: Theme.muted; }
+                HorizontalLayout { alignment: start; AboutSlint { } }
+            }
+        }
+    }
+}
+
+export component MainWindow inherits Window {
+    title: "Hamsa Beta";
+    icon: @image-url("../assets/app-icon.png");
+    min-width: 900px;
+    min-height: 600px;
+    preferred-width: 1200px;
+    preferred-height: 800px;
+    background: Theme.bg;
+    default-font-family: Theme.font;
+    // Lets Rust save a note being edited when you leave its page.
+    out property <int> shown-page: AppState.page;
+    changed shown-page => { AppState.page-changed(self.shown-page); }
+
+    HorizontalLayout {
+        Sidebar { }
+        ScrollView {
+            horizontal-stretch: 1;
+            content-height: content.preferred-height;
+            // .main padding 44 48 56; .content max-width 880, centred
+            content := HorizontalLayout {
+                padding-top: 44px;
+                padding-bottom: 56px;
+                padding-left: 48px;
+                padding-right: 48px;
+                alignment: center;
+                VerticalLayout {
+                    width: min(AppState.page == 2 || AppState.page == 4 ? 960px : 880px, root.width - 220px - 96px);
+                    if AppState.page == 0: HomePage { }
+                    if AppState.page == 1: DictionaryPage { }
+                    if AppState.page == 2: SnippetsPage { }
+                    if AppState.page == 3: StylePage { }
+                    if AppState.page == 4: NotesPage { }
+                    if AppState.page == 5: SettingsPage { }
+                    if AppState.page == 6: HelpPage { }
+                }
+            }
+        }
+    }
+}

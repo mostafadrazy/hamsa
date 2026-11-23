@@ -6,6 +6,10 @@
 
 **Hold a shortcut, speak, and the text appears wherever you are typing. Fully on your PC.**
 
+**An open-source, fully local alternative to [Wispr Flow](https://wisprflow.ai).** No account, no subscription, your voice never leaves your computer.
+
+[**⬇ Download for Windows**](https://github.com/mostafadrazy/hamsa/releases/latest)
+
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 ![Platform: Windows](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6.svg)
 ![Rust](https://img.shields.io/badge/built%20with-Rust-dea584.svg)
@@ -81,7 +85,7 @@ Moroccan Darija models take a different route: fihrIA-ASR runs on the same local
 
 ## Install
 
-A Windows installer (`Hamsa_Beta_0.1.0_x64-setup.exe`) will be published on the [Releases](../../releases) page. **Coming soon.** It installs for the current user only and needs no administrator rights.
+Download `Hamsa_Beta_0.1.0_x64-setup.exe` from the [latest release](https://github.com/mostafadrazy/hamsa/releases/latest) and run it. It installs for the current user only and needs no administrator rights. The installer isn't code-signed yet, so Windows SmartScreen may warn you: choose **More info → Run anyway**.
 
 On first start, Hamsa downloads the speech model you choose (about 165 MB for Phonon-2.5).
 
@@ -165,7 +169,7 @@ Hamsa stands on other people's work. Full license details are in [NOTICE.md](NOT
 
 **Inspiration**
 
-Hamsa is an independent project, inspired by [Wispr Flow](https://wisprflow.ai) and by Google's on-device dictation work (Google AI Edge Eloquent, Gboard's Rambler). It is not affiliated with or endorsed by their makers, and uses none of their code or assets.
+Hamsa is an independent, open-source alternative to [Wispr Flow](https://wisprflow.ai), inspired by it and by Google's on-device dictation work (Google AI Edge Eloquent, Gboard's Rambler). It is not affiliated with or endorsed by their makers, and uses none of their code or assets.
 
 ## License
 

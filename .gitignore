@@ -1,6 +1,7 @@
 ﻿# Hamsa Beta public repo: allow-list. Everything is ignored except the Beta workspace.
 /*
 !/.gitignore
+!/.gitattributes
 !/Cargo.toml
 !/Cargo.lock
 !/LICENSE

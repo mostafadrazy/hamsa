@@ -16,7 +16,11 @@
 ![UI: Slint](https://img.shields.io/badge/UI-Slint-2379F4.svg)
 ![Status: beta](https://img.shields.io/badge/status-beta-orange.svg)
 
-<img src="docs/screenshots/home.png" alt="Hamsa Beta home page" width="820">
+<video controls width="820" poster="https://raw.githubusercontent.com/mostafadrazy/hamsa/main/docs/screenshots/home.png" src="https://raw.githubusercontent.com/mostafadrazy/hamsa/main/docs/media/hamsa-demo.mp4"></video>
+
+[Watch the Hamsa dictation demo (1 min 16 sec)](https://raw.githubusercontent.com/mostafadrazy/hamsa/main/docs/media/hamsa-demo.mp4)
+
+<sub>Music: <a href="https://suno.com/song/89dcf37d-1708-43dd-a6cd-d4181ac2644d">Soft Signal</a>, generated with Suno. The soundtrack is for <a href="https://suno.com/terms">personal, non-commercial use</a>.</sub>
 
 <br>
 
